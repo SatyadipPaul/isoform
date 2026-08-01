@@ -1,0 +1,24 @@
+{
+  "name": "isoform",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "3D System Designer — machined architecture diagrams in the browser",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @isoform/editor",
+    "catalog": "npm run dev -w @isoform/engine",
+    "build": "npm run build -w @isoform/engine && npm run build -w @isoform/editor",
+    "typecheck": "npm run typecheck -w @isoform/engine && npm run typecheck -w @isoform/editor",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.1.5",
+    "vitest": "^4.1.10"
+  }
+}

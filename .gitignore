@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dev-dist/
+*.tsbuildinfo
+.DS_Store
+.vite/
+
+# Local copy of the source catalog, served next to the M1 gate for
+# side-by-side comparison. Not ours to commit.
+packages/engine/dev/original.html

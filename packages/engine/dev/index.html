@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Isoform — M1 Gate · Catalog rebuilt from the registry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0E1116; --plate:#151920; --line:#252B36; --line-soft:#1E232C;
+  --ink:#E7EBF2; --ink-2:#98A3B4; --ink-3:#5F6A7B;
+  --brass:#D9AE6B; --brass-dim:#8A6F42;
+  --tile-h:258px; --r:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:2;opacity:.035;
+  background-image:linear-gradient(var(--ink) 1px,transparent 1px),linear-gradient(90deg,var(--ink) 1px,transparent 1px);
+  background-size:64px 64px;
+  mask-image:radial-gradient(ellipse at 50% 0%,#000 10%,transparent 75%);
+  -webkit-mask-image:radial-gradient(ellipse at 50% 0%,#000 10%,transparent 75%)}
+#gl{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none}
+.page{position:relative;z-index:1;max-width:1240px;margin:0 auto;padding:0 24px 100px}
+
+header.top{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:18px;
+  padding:14px 0;margin-bottom:8px;background:linear-gradient(var(--bg) 72%,transparent);
+  border-bottom:1px solid var(--line-soft)}
+.mark{font-family:"Archivo",sans-serif;font-weight:700;letter-spacing:-.02em;font-size:16px;
+  display:flex;align-items:center;gap:9px}
+.mark i{width:11px;height:11px;display:block;background:var(--brass);
+  transform:rotate(45deg) skewY(-12deg);border-radius:1px}
+.mono{font-family:"IBM Plex Mono",monospace}
+.rev{font-size:10.5px;color:var(--ink-3);letter-spacing:.14em;text-transform:uppercase}
+.ctrls{margin-left:auto;display:flex;gap:7px}
+.ctrls button{font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.1em;
+  text-transform:uppercase;background:transparent;color:var(--ink-2);border:1px solid var(--line);
+  padding:7px 11px;border-radius:5px;cursor:pointer;transition:.16s}
+.ctrls button:hover{color:var(--ink);border-color:var(--ink-3)}
+.ctrls button[aria-pressed="true"]{color:var(--brass);border-color:var(--brass-dim);background:rgba(217,174,107,.07)}
+.ctrls button:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+.hero{padding:52px 0 34px;border-bottom:1px solid var(--line-soft)}
+.eyebrow{font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.2em;
+  text-transform:uppercase;color:var(--brass);margin-bottom:20px}
+h1{font-family:"Archivo",sans-serif;font-weight:700;letter-spacing:-.035em;
+  font-size:clamp(38px,6.2vw,74px);line-height:.96;margin:0 0 20px;max-width:16ch}
+h1 em{font-style:normal;color:var(--ink-3)}
+.lede{max-width:57ch;color:var(--ink-2);font-size:15.5px;line-height:1.62;margin:0}
+.stats{display:flex;flex-wrap:wrap;gap:36px;margin-top:34px}
+.stat b{display:block;font-family:"Archivo",sans-serif;font-size:22px;letter-spacing:-.02em}
+.stat span{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--ink-3)}
+
+.assembly{margin:34px 0 0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:transparent}
+.assembly .bar{display:flex;align-items:center;gap:14px;padding:11px 16px;border-bottom:1px solid var(--line-soft);
+  background:var(--plate);
+  font-family:"IBM Plex Mono",monospace;font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
+.assembly .bar b{color:var(--ink-2);font-weight:500}
+.assembly .stage{height:min(58vh,470px);position:relative;cursor:grab;background:transparent}
+.assembly .stage:active{cursor:grabbing}
+
+section{padding-top:66px}
+.sec-head{display:flex;align-items:baseline;gap:16px;border-bottom:1px solid var(--line);
+  padding-bottom:12px;margin-bottom:26px}
+.sec-head h2{font-family:"Archivo",sans-serif;font-weight:600;font-size:19px;letter-spacing:-.015em;margin:0}
+.sec-head .code{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--brass);letter-spacing:.14em}
+.sec-head p{margin:0 0 0 auto;color:var(--ink-3);font-size:12.5px;max-width:42ch;text-align:right}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(272px,1fr));gap:16px}
+.cell{border:1px solid var(--line-soft);border-radius:var(--r);background:transparent;
+  overflow:hidden;transition:border-color .2s,transform .2s}
+.cell:hover{border-color:#323A48;transform:translateY(-2px)}
+.cell:focus-within{border-color:var(--brass-dim)}
+.viewport{position:relative;height:var(--tile-h);cursor:grab;touch-action:pan-y;background:transparent}
+.viewport:active{cursor:grabbing}
+.viewport .tick{position:absolute;width:13px;height:13px;border:1px solid rgba(217,174,107,.32);
+  opacity:0;transition:opacity .2s}
+.cell:hover .tick{opacity:1}
+.tick.tl{top:10px;left:10px;border-right:0;border-bottom:0}
+.tick.tr{top:10px;right:10px;border-left:0;border-bottom:0}
+.tick.bl{bottom:10px;left:10px;border-right:0;border-top:0}
+.tick.br{bottom:10px;right:10px;border-left:0;border-top:0}
+.pn{position:absolute;top:12px;left:14px;font-family:"IBM Plex Mono",monospace;
+  font-size:10px;letter-spacing:.13em;color:var(--ink-3)}
+.fin{position:absolute;bottom:12px;right:14px;font-family:"IBM Plex Mono",monospace;
+  font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);opacity:0;transition:opacity .2s}
+.cell:hover .fin{opacity:.85}
+.meta{padding:13px 15px 15px;border-top:1px solid var(--line-soft);background:var(--plate)}
+.meta h3{font-family:"Archivo",sans-serif;font-weight:600;font-size:14.5px;letter-spacing:-.01em;margin:0 0 5px}
+.meta p{margin:0;font-size:12.3px;line-height:1.5;color:var(--ink-3)}
+.spec{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;font-family:"IBM Plex Mono",monospace;
+  font-size:9.5px;letter-spacing:.09em;text-transform:uppercase;align-items:center}
+.spec span,.spec label,.spec button{border:1px solid var(--line);border-radius:3px;padding:3px 6px;
+  color:var(--ink-3);font-family:inherit;font-size:inherit;letter-spacing:inherit;
+  text-transform:inherit;background:transparent}
+.spec label{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--ink-2)}
+.spec label input[type=color]{-webkit-appearance:none;appearance:none;width:12px;height:12px;
+  padding:0;border:0;background:none;cursor:pointer;border-radius:50%}
+.spec label input[type=color]::-webkit-color-swatch-wrapper{padding:0}
+.spec label input[type=color]::-webkit-color-swatch{border:1px solid rgba(255,255,255,.28);border-radius:50%}
+.spec label:focus-within{border-color:var(--brass-dim)}
+.spec button{cursor:pointer}
+.spec label:hover,.spec button:hover{border-color:var(--ink-3);color:var(--ink)}
+.spec button:focus-visible,.spec label:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+
+.diag{margin-top:74px;border:1px solid var(--line);border-radius:var(--r);background:var(--plate);padding:26px 28px}
+.diag h2{font-family:"Archivo",sans-serif;font-size:16px;margin:0 0 4px;letter-spacing:-.01em}
+.diag > p{margin:0 0 22px;color:var(--ink-3);font-size:12.5px}
+.diag dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:20px 26px;margin:0}
+.diag dt{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:var(--brass);margin-bottom:6px}
+.diag dd{margin:0;font-size:13px;color:var(--ink-2);line-height:1.5}
+footer.end{margin-top:44px;padding-top:18px;border-top:1px solid var(--line-soft);display:flex;
+  flex-wrap:wrap;gap:14px;font-family:"IBM Plex Mono",monospace;font-size:10px;
+  letter-spacing:.13em;text-transform:uppercase;color:var(--ink-3)}
+footer.end span:last-child{margin-left:auto}
+
+@media (max-width:640px){:root{--tile-h:220px}.sec-head p{display:none}.page{padding:0 16px 70px}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div class="page">
+  <header class="top">
+    <div class="mark"><i></i>ISOFORM</div>
+    <div class="rev mono">M1 gate · rebuilt from @isoform/engine</div>
+    <div class="ctrls">
+      <button id="btn-spin" aria-pressed="true">Auto-rotate</button>
+      <button id="btn-sync" aria-pressed="true">Sync category</button>
+      <button id="btn-grid" aria-pressed="true">Datum grid</button>
+      <button id="btn-shadow" aria-pressed="true">Cast shadows</button>
+    </div>
+  </header>
+
+  <div class="hero">
+    <div class="eyebrow mono">Milestone 01 — every tile driven by the part registry</div>
+    <h1>Architecture diagrams, <em>machined instead of drawn.</em></h1>
+    <p class="lede">This page is the M1 acceptance gate. It reproduces the original component catalog, but nothing here is hand-built any more — every tile asks <code>@isoform/engine</code>'s registry for its part. Open it beside <code>3d-architecture-components_1.html</code>: any part that renders differently means the foundry port is wrong, and everything downstream would inherit that error.</p>
+    <div class="stats">
+      <div class="stat"><b>0.25u</b><span>Grid unit</span></div>
+      <div class="stat"><b>0.06u</b><span>Global fillet</span></div>
+      <div class="stat"><b id="stat-mat">—</b><span>Materials cached</span></div>
+      <div class="stat"><b id="stat-geo">—</b><span>Geometries cached</span></div>
+    </div>
+
+    <div class="assembly">
+      <div class="bar mono"><b>ASM-000</b> Reference assembly <span style="margin-left:auto">Drag to orbit</span></div>
+      <div class="stage" data-part="assembly"></div>
+    </div>
+  </div>
+
+  <main id="sections"></main>
+
+  <div class="diag">
+    <h2>What this gate proves</h2>
+    <p>Each row is a way the port could have silently broken.</p>
+    <dl>
+      <dt>Silhouette</dt><dd>Every part built through the registry, not by hand. A wrong geometry argument shows up as a changed outline.</dd>
+      <dt>Material cache</dt><dd>Hundreds of <code>FINISH.*</code> calls collapse onto the counter above. If tinting still works, roles are tagged correctly.</dd>
+      <dt>Geometry cache</dt><dd>Parametric primitives are memoised. Two <code>service</code> tiles must share geometry and still animate independently.</dd>
+      <dt>Surface presets</dt><dd>Vent perforation, corrugation, shutter ribs and brick bond are cache keys now, not post-hoc mutation.</dd>
+      <dt>Unique materials</dt><dd>The cache halo and firewall slit own their emissive material, so they pulse per instance rather than in lockstep.</dd>
+      <dt>Connectors</dt><dd>Specimens exercise <code>elbowCurve</code>, <code>arrowHead</code> and <code>dashedRun</code> before the Phase 4 router is built on them.</dd>
+    </dl>
+  </div>
+
+  <footer class="end mono">
+    <span>Isoform</span><span>Vite · TypeScript · three r185</span><span>Next: document model, reconciler, canvas editing</span>
+  </footer>
+</div>
+
+<script type="module" src="./catalog.ts"></script>
+</body>
+</html>

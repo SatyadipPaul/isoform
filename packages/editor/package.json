@@ -1,0 +1,20 @@
+{
+  "name": "@isoform/editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Canvas-first editor for Isoform system diagrams",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@isoform/engine": "*",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.1"
+  }
+}

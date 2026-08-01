@@ -1,0 +1,29 @@
+{
+  "name": "@isoform/engine",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Part registry, document model, router and renderer bridge for Isoform diagrams",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "three": ">=0.180.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.1",
+    "three": "^0.185.1"
+  }
+}
