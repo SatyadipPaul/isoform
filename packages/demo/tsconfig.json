@@ -2,6 +2,16 @@
   "extends": "../../tsconfig.base.json",
   "include": ["src"],
   "compilerOptions": {
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    /* Resolve `isoform` to source, matching the alias in vite.config.ts.
+       Without this, tsc follows the package's `exports` map to dist/ — which is
+       gitignored, so a clean checkout typechecks against a directory that does
+       not exist and fails with "Cannot find module 'isoform'". It passed
+       locally only because a stale build happened to be lying around.
+       Type-checking the demo against the same sources vite bundles is also the
+       more useful check: the two agreeing is the point. */
+    "paths": {
+      "isoform": ["../isoform/src/index.ts"]
+    }
   }
 }
