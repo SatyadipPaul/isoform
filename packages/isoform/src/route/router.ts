@@ -11,8 +11,8 @@
  */
 
 import * as THREE from 'three'
-import type { Doc, DocEdge } from '../doc/schema.js'
-import { choosePortPair, manifestFor, portTransform } from '../parts/registry.js'
+import type { Doc, DocEdge, DocGroup } from '../doc/schema.js'
+import { boxPort, chooseBoxPortPair, portBoxOf, type PortBox } from '../parts/registry.js'
 import type { PartId, PortId, PortTransform } from '../parts/types.js'
 import { ARROW_LEN } from './styles.js'
 import { LaneAllocator, type Claim } from './lanes.js'
@@ -425,10 +425,20 @@ export interface ResolvedEdge {
   rung: Rung
 }
 
+/**
+ * An endpoint a connector can attach to.
+ *
+ * A box rather than a part id, so a *group boundary* is a first-class endpoint.
+ * Wiring a tier as one thing is the whole point — otherwise every line into
+ * "Backend" has to land on some arbitrary member inside it, and the picture
+ * says something the architecture does not.
+ */
 interface Placed {
-  type: PartId
+  box: PortBox
   origin: THREE.Vector3
   yaw: number
+  /** Present for parts. Absent for a group, which has no manifest. */
+  type?: PartId
 }
 
 /**
@@ -453,12 +463,18 @@ function signatureOf(edge: DocEdge, a: Placed, b: Placed): string {
     edge.route,
     edge.from.port ?? '-',
     edge.to.port ?? '-',
-    a.type,
+    /* The box, not the type: a group has no type, and resizing one moves its
+       anchors exactly as surely as replacing a part with a bigger one does. */
+    a.box.w,
+    a.box.d,
+    a.box.y,
     a.origin.x,
     a.origin.y,
     a.origin.z,
     a.yaw,
-    b.type,
+    b.box.w,
+    b.box.d,
+    b.box.y,
     b.origin.x,
     b.origin.y,
     b.origin.z,
@@ -503,11 +519,11 @@ function overlaps(a: Rect, b: Rect): boolean {
   return a.minX <= b.maxX && b.minX <= a.maxX && a.minZ <= b.maxZ && b.minZ <= a.maxZ
 }
 
-/** Ground extent a placed part occupies, inflated by the routing clearance. */
-function nodeRect(type: PartId, origin: THREE.Vector3, pad: number): Rect {
-  const f = manifestFor(type).footprint
-  const hw = f.w / 2 + pad
-  const hd = f.d / 2 + pad
+/** Ground extent a placed endpoint occupies, inflated by the routing clearance. */
+function placedRect(p: Placed, pad: number): Rect {
+  const hw = p.box.w / 2 + pad
+  const hd = p.box.d / 2 + pad
+  const origin = p.origin
   return {
     minX: origin.x - hw,
     maxX: origin.x + hw,
@@ -560,18 +576,22 @@ export class Router {
     for (const [id, now] of placed) {
       const was = this.prevPlaced.get(id)
       if (!was) {
-        dirty.push(nodeRect(now.type, now.origin, pad))
+        dirty.push(placedRect(now, pad))
         continue
       }
+      /* Compared by box rather than by type: a group has no type, and resizing
+         one moves its walls exactly as surely as swapping a part does. */
       const same =
-        was.type === now.type &&
+        was.box.w === now.box.w &&
+        was.box.d === now.box.d &&
+        was.box.y === now.box.y &&
         was.yaw === now.yaw &&
         was.origin.equals(now.origin)
       if (same) continue
-      dirty.push(nodeRect(was.type, was.origin, pad), nodeRect(now.type, now.origin, pad))
+      dirty.push(placedRect(was, pad), placedRect(now, pad))
     }
     for (const [id, was] of this.prevPlaced) {
-      if (!placed.has(id)) dirty.push(nodeRect(was.type, was.origin, pad))
+      if (!placed.has(id)) dirty.push(placedRect(was, pad))
     }
 
     type Choice = {
@@ -601,12 +621,10 @@ export class Router {
         fromPort = reusable.resolved.fromPort
         toPort = reusable.resolved.toPort
       } else {
-        const pair = choosePortPair(a.type, a.origin, b.type, b.origin, {
-          fromYaw: a.yaw,
-          toYaw: b.yaw,
-          pinFrom: edge.from.port,
-          pinTo: edge.to.port,
-        })
+        const pair = chooseBoxPortPair(
+          { box: a.box, origin: a.origin, yaw: a.yaw, pin: edge.from.port },
+          { box: b.box, origin: b.origin, yaw: b.yaw, pin: edge.to.port },
+        )
         if (!pair) continue
         fromPort = pair.from.id
         toPort = pair.to.id
@@ -711,16 +729,46 @@ export class Router {
   }
 }
 
+/**
+ * Every endpoint an edge may name, keyed by id.
+ *
+ * Nodes first, then groups. A collision is resolved in the node's favour, which
+ * is both the compatible answer — every document written before groups became
+ * connectable means the node — and the safer one, since a group is the coarser
+ * thing and silently promoting an edge to it would change what the picture says.
+ */
 function placementsOf(doc: Doc): Map<string, Placed> {
   const placed = new Map<string, Placed>()
+  for (const g of doc.groups) {
+    placed.set(g.id, {
+      box: groupPortBox(g),
+      origin: new THREE.Vector3(g.pos[0], 0, g.pos[1]),
+      /* Boundaries are axis-aligned; `fitGroups` derives them from member extents
+         and there is no affordance for turning one. */
+      yaw: 0,
+    })
+  }
   for (const n of doc.nodes) {
     placed.set(n.id, {
       type: n.type,
+      box: portBoxOf(n.type),
       origin: new THREE.Vector3(n.pos[0], n.y ?? 0, n.pos[1]),
       yaw: n.rot,
     })
   }
   return placed
+}
+
+/**
+ * Where connectors meet a boundary.
+ *
+ * Low on the wall rather than at mid-height: the box is translucent and a line
+ * arriving halfway up it reads as floating inside the tier rather than docking
+ * against it. Capped so a tall boundary does not lift its connectors above the
+ * parts they come from.
+ */
+export function groupPortBox(g: DocGroup): PortBox {
+  return { w: g.size[0], d: g.size[2], y: Math.min(0.34, g.size[1] * 0.42) }
 }
 
 function resolveOne(
@@ -733,9 +781,8 @@ function resolveOne(
   toSlot: { slot: number; of: number },
   ctx: RouteContext,
 ): ResolvedEdge | null {
-  const from = portTransform(a.type, fromPort, a.origin, a.yaw, fromSlot)
-  const to = portTransform(b.type, toPort, b.origin, b.yaw, toSlot)
-  if (!from || !to) return null
+  const from = boxPort(a.box, fromPort, a.origin, a.yaw, fromSlot)
+  const to = boxPort(b.box, toPort, b.origin, b.yaw, toSlot)
 
   let pts: THREE.Vector3[]
   let rung: Rung = 'direct'

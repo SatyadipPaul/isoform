@@ -53,9 +53,20 @@ function offsetPolyline(pts: THREE.Vector3[], d: number): THREE.Vector3[] {
   })
 }
 
-function curveOf(pts: THREE.Vector3[]): THREE.CatmullRomCurve3 {
+/**
+ * The curve a connector is actually built along.
+ *
+ * Exported because anything travelling a connector has to follow the same line
+ * the tube was swept along, corner rounding included. Walking the raw polyline
+ * instead would cut every corner the geometry rounds, and a packet that leaves
+ * its own conduit at each bend reads as a bug in the routing rather than in the
+ * thing moving.
+ */
+export function routeCurve(pts: THREE.Vector3[]): THREE.CatmullRomCurve3 {
   return elbowCurve(pts, ELBOW_R)
 }
+
+const curveOf = routeCurve
 
 /** Lift the middle of a run into an arc, for styles that read as non-blocking. */
 function arched(pts: THREE.Vector3[], rise: number): THREE.Vector3[] {

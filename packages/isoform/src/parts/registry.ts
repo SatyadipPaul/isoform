@@ -127,43 +127,62 @@ const FAN_SPREAD = 0.62
  *
  * The router consumes this; nothing else should compute port positions.
  */
-export function portTransform(
-  id: PartId,
+/**
+ * Anything a connector can attach to: a ground-plane extent and a height.
+ *
+ * Introduced so a *group boundary* can carry connectors too. A group is a box
+ * with a size and no manifest, and everything below only ever needed the
+ * footprint and the port height — the part id was standing in for those two
+ * numbers. Taking the box directly is what lets a tier be wired up as one thing
+ * rather than forcing every line to land on some arbitrary member inside it.
+ */
+export interface PortBox {
+  w: number
+  d: number
+  /** Height at which connectors meet it. */
+  y: number
+}
+
+export function portBoxOf(id: PartId): PortBox {
+  const m = MANIFESTS[id]
+  return { w: m.footprint.w, d: m.footprint.d, y: m.portY }
+}
+
+/**
+ * Which face each compass anchor sits on.
+ *
+ * Derived here rather than read from a manifest's `ports` array, because that
+ * array is itself derived from exactly this mapping — and a box has no manifest
+ * to read it from.
+ */
+const SIDE: Record<PortId, { axis: 'x' | 'z'; sign: 1 | -1 }> = {
+  n: { axis: 'z', sign: -1 },
+  e: { axis: 'x', sign: 1 },
+  s: { axis: 'z', sign: 1 },
+  w: { axis: 'x', sign: -1 },
+}
+
+/** World-space position and outward normal of one anchor on a box. */
+export function boxPort(
+  box: PortBox,
   portId: PortId,
   origin: THREE.Vector3,
   yaw = 0,
   fan?: FanSlot,
-): PortTransform | null {
-  const m = MANIFESTS[id]
-  const spec = m.ports.find((p) => p.id === portId)
-  if (!spec) return null
-
-  const hw = m.footprint.w / 2
-  const hd = m.footprint.d / 2
+): PortTransform {
+  const hw = box.w / 2
+  const hd = box.d / 2
 
   /* −1..+1 across the face; a lone connector sits dead centre. */
   const t = !fan || fan.of <= 1 ? 0 : (fan.slot / (fan.of - 1) - 0.5) * 2 * FAN_SPREAD
 
-  let local: THREE.Vector3
-  let normal: THREE.Vector3
-  switch (spec.side) {
-    case '-x':
-      local = new THREE.Vector3(-hw, spec.y, t * hd)
-      normal = new THREE.Vector3(-1, 0, 0)
-      break
-    case '+x':
-      local = new THREE.Vector3(hw, spec.y, t * hd)
-      normal = new THREE.Vector3(1, 0, 0)
-      break
-    case '-z':
-      local = new THREE.Vector3(t * hw, spec.y, -hd)
-      normal = new THREE.Vector3(0, 0, -1)
-      break
-    case '+z':
-      local = new THREE.Vector3(t * hw, spec.y, hd)
-      normal = new THREE.Vector3(0, 0, 1)
-      break
-  }
+  const { axis, sign } = SIDE[portId]
+  const local =
+    axis === 'x'
+      ? new THREE.Vector3(sign * hw, box.y, t * hd)
+      : new THREE.Vector3(t * hw, box.y, sign * hd)
+  const normal =
+    axis === 'x' ? new THREE.Vector3(sign, 0, 0) : new THREE.Vector3(0, 0, sign)
 
   if (yaw) {
     local.applyAxisAngle(UP, yaw)
@@ -172,16 +191,32 @@ export function portTransform(
   return { position: local.add(origin), normal }
 }
 
+/** All four anchors of a box, in N/E/S/W order. */
+export function boxPorts(
+  box: PortBox,
+  origin: THREE.Vector3,
+  yaw = 0,
+): Array<PortTransform & { id: PortId }> {
+  return PORT_IDS.map((id) => ({ id, ...boxPort(box, id, origin, yaw) }))
+}
+
+export function portTransform(
+  id: PartId,
+  portId: PortId,
+  origin: THREE.Vector3,
+  yaw = 0,
+  fan?: FanSlot,
+): PortTransform | null {
+  return boxPort(portBoxOf(id), portId, origin, yaw, fan)
+}
+
 /** All four anchors of a placed part, in N/E/S/W order. */
 export function portsOf(
   id: PartId,
   origin: THREE.Vector3,
   yaw = 0,
 ): Array<PortTransform & { id: PortId }> {
-  return PORT_IDS.map((pid) => {
-    const t = portTransform(id, pid, origin, yaw)!
-    return { id: pid, ...t }
-  })
+  return boxPorts(portBoxOf(id), origin, yaw)
 }
 
 /**
@@ -197,9 +232,19 @@ export function nearestPort(
   yaw: number,
   toward: THREE.Vector3,
 ): (PortTransform & { id: PortId }) | null {
+  return nearestBoxPort(portBoxOf(id), origin, yaw, toward)
+}
+
+/** As `nearestPort`, for anything with a footprint — a part or a group. */
+export function nearestBoxPort(
+  box: PortBox,
+  origin: THREE.Vector3,
+  yaw: number,
+  toward: THREE.Vector3,
+): (PortTransform & { id: PortId }) | null {
   let best: (PortTransform & { id: PortId }) | null = null
   let bestScore = Infinity
-  for (const p of portsOf(id, origin, yaw)) {
+  for (const p of boxPorts(box, origin, yaw)) {
     const dir = toward.clone().sub(p.position)
     const dist = dir.length()
     if (dist < 1e-6) return p
@@ -235,12 +280,24 @@ export function choosePortPair(
   toOrigin: THREE.Vector3,
   opts: { fromYaw?: number; toYaw?: number; pinFrom?: PortId; pinTo?: PortId } = {},
 ): PortPair | null {
-  const fromPorts = portsOf(fromId, fromOrigin, opts.fromYaw ?? 0).filter(
-    (p) => !opts.pinFrom || p.id === opts.pinFrom,
+  return chooseBoxPortPair(
+    { box: portBoxOf(fromId), origin: fromOrigin, yaw: opts.fromYaw ?? 0, pin: opts.pinFrom },
+    { box: portBoxOf(toId), origin: toOrigin, yaw: opts.toYaw ?? 0, pin: opts.pinTo },
   )
-  const toPorts = portsOf(toId, toOrigin, opts.toYaw ?? 0).filter(
-    (p) => !opts.pinTo || p.id === opts.pinTo,
-  )
+}
+
+/** One end of a candidate connector: where it is, how big, and any pinned anchor. */
+export interface PortEnd {
+  box: PortBox
+  origin: THREE.Vector3
+  yaw?: number
+  pin?: PortId
+}
+
+/** As `choosePortPair`, for anything with a footprint — a part or a group. */
+export function chooseBoxPortPair(a: PortEnd, b: PortEnd): PortPair | null {
+  const fromPorts = boxPorts(a.box, a.origin, a.yaw ?? 0).filter((p) => !a.pin || p.id === a.pin)
+  const toPorts = boxPorts(b.box, b.origin, b.yaw ?? 0).filter((p) => !b.pin || p.id === b.pin)
 
   let best: PortPair | null = null
   let bestScore = Infinity

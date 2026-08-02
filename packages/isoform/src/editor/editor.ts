@@ -29,7 +29,7 @@ import {
   frameOrtho,
   layout,
   manifestFor,
-  nearestPort,
+  nearestBoxPort,
   nextId,
   palette,
   parseDsl,
@@ -293,6 +293,7 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
       hoverBox.fit(null)
     }
     renderInspector()
+    refreshTraceBar()
   })
 
   function run(cmd: Command, label?: string): void {
@@ -563,10 +564,10 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
    * it is hovered or selected.
    */
   function refreshDetail(): void {
-    const focus: string[] = []
-    for (const id of selectedNodes()) focus.push(id)
-    if (hover) focus.push(hover)
-    reconciler.updateDetail({ focus })
+    const detailed: string[] = []
+    for (const id of selectedNodes()) detailed.push(id)
+    if (hover) detailed.push(hover)
+    reconciler.updateDetail({ detailed })
   }
 
   /* ------------------------------------------------------------------ *
@@ -704,6 +705,8 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
 
   let mode: Mode = { k: 'idle' }
   let hover: string | null = null
+  /** Boundary under the pointer, which shows its anchors so it can be wired. */
+  let hoverGroup: string | null = null
 
   function clearGhost(): void {
     ghostLayer.clear()
@@ -721,8 +724,40 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
     }
     /* Selection already has its own outline; a second box on top reads as a bug. */
     hoverBox.fit(id && !selectedNodes().includes(id) ? outlineOf(id) : null)
-    canvas.style.cursor = id ? 'grab' : ''
+    refreshCursor()
     refreshDetail()
+  }
+
+  /**
+   * One place decides the pointer, from what the next click would actually do.
+   *
+   * It was previously set from four scattered places, each knowing only its own
+   * gesture — so leaving a part without entering another left the grab hand up,
+   * and nothing distinguished "this drags" from "this draws a connector" or
+   * "this turns". The cursor is the only continuous feedback the canvas gives
+   * about what a click means, and it has to be derived from one state rather
+   * than patched at each transition.
+   */
+  function refreshCursor(): void {
+    canvas.style.cursor = cursorFor()
+  }
+
+  function cursorFor(): string {
+    /* Active gestures win: what is happening beats what could happen. */
+    if (mode.k === 'placing') return 'copy'
+    if (mode.k === 'moving') return 'grabbing'
+    if (mode.k === 'connecting') return 'crosshair'
+    if (rotateDrag) return 'grabbing'
+
+    /* The rotation ring overhangs the part it belongs to and is tested first on
+       press, so it has to claim the pointer first here too. */
+    if (gizmo.visible && raycaster.intersectObjects(gizmo.handles, false).length) return 'alias'
+    /* An anchor is where a connector is *drawn from*, so it reads as a pen. */
+    if (pickAnchor()) return 'crosshair'
+    if (hover) return 'grab'
+    if (hoverEdge) return 'pointer'
+    if (hoverGroup) return 'pointer'
+    return ''
   }
 
   function pickNode(): string | null {
@@ -757,9 +792,40 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
   }
 
   function pickAnchor(): THREE.Mesh | null {
-    const vis = [...reconciler.views.keys()].flatMap((k) => reconciler.anchorsOf(k)).filter((m) => m.visible)
+    const vis = reconciler.endpointIds
+      .flatMap((k) => reconciler.anchorsOf(k))
+      .filter((m) => m.visible)
     const hits = raycaster.intersectObjects(vis, false)
     return hits.length ? (hits[0].object as THREE.Mesh) : null
+  }
+
+  /**
+   * Show a boundary's own anchors while the pointer is over it.
+   *
+   * A tier is a thing in the architecture, and a connector to it says something
+   * a connector to one of its members does not. Without anchors on the wall the
+   * only way to draw that line is to pick some member and misstate it.
+   */
+  function setHoverGroup(id: string | null): void {
+    if (id === hoverGroup) return
+    if (hoverGroup) for (const a of reconciler.anchorsOf(hoverGroup)) a.visible = false
+    hoverGroup = id
+    if (hoverGroup) {
+      for (const a of reconciler.anchorsOf(hoverGroup)) {
+        a.visible = true
+        a.material = anchorIdle
+      }
+    }
+  }
+
+  /** Hide every anchor, whatever it belongs to. */
+  function clearAnchors(): void {
+    for (const k of reconciler.endpointIds) {
+      for (const a of reconciler.anchorsOf(k)) {
+        a.material = anchorIdle
+        a.visible = false
+      }
+    }
   }
 
   /* ------------------------------------------------------------------ *
@@ -844,18 +910,24 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
     }
 
     if (mode.k === 'connecting') {
+      refreshCursor()
       const src = anchorXf(mode.from, mode.port)
       if (!src) return
-      const overId = pickNode()
+      /* A part in front wins; otherwise the boundary under the pointer catches
+         the drop, so a tier can be wired as one thing. */
+      const overId = pickNode() ?? pickGroup()
       let target: { position: THREE.Vector3; normal: THREE.Vector3 } | null = null
 
-      for (const k of reconciler.views.keys()) {
-        for (const a of reconciler.anchorsOf(k)) a.material = k === mode.from ? anchorHot : anchorIdle
+      for (const k of reconciler.endpointIds) {
+        for (const a of reconciler.anchorsOf(k)) {
+          a.visible = k === mode.from
+          a.material = k === mode.from ? anchorHot : anchorIdle
+        }
       }
       if (overId && overId !== mode.from) {
-        const n = nodeById(overId)!
+        const end = reconciler.portBoxFor(overId)
         const at = pointerOnGround(src.position.y) ?? src.position
-        const snapped = nearestPort(n.type, new THREE.Vector3(n.pos[0], n.y ?? 0, n.pos[1]), n.rot, at)
+        const snapped = end && nearestBoxPort(end.box, end.origin, end.yaw, at)
         if (snapped) {
           target = snapped
           for (const a of reconciler.anchorsOf(overId)) {
@@ -882,7 +954,11 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
     setHover(overNode)
     const overEdge = overNode ? null : pickEdge()
     setHoverEdge(overEdge)
-    if (!overNode && overEdge) canvas.style.cursor = 'pointer'
+    /* A boundary only offers its anchors when nothing solid is in front of it —
+       the shell is large and would otherwise steal the affordance from every
+       part inside it. */
+    setHoverGroup(overNode || overEdge ? null : pickGroup())
+    refreshCursor()
   })
 
   /**
@@ -921,6 +997,10 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
           port: anchor.userData.portId as PortId,
         }
         controls.enabled = false
+        /* The gesture starts here, and the pointermove that follows returns
+           before the cursor is recomputed — so without this the crosshair never
+           appears during the one gesture it exists for. */
+        refreshCursor()
         e.stopPropagation()
         return
       }
@@ -1043,7 +1123,7 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
     }
 
     if (mode.k === 'connecting') {
-      const overId = pickNode()
+      const overId = pickNode() ?? pickGroup()
       clearGhost()
       controls.enabled = true
       if (overId && overId !== mode.from) {
@@ -1061,14 +1141,12 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
           'connect',
         )
       }
-      for (const k of reconciler.views.keys()) {
-        for (const a of reconciler.anchorsOf(k)) {
-          a.material = anchorIdle
-          a.visible = false
-        }
-      }
+      clearAnchors()
       hover = null
+      hoverGroup = null
       mode = { k: 'idle' }
+      /* The drag ends without a move, so nothing else would drop the crosshair. */
+      refreshCursor()
     }
   })
 
@@ -1529,6 +1607,120 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
     sheet.classList.add('hidden')
   })
 
+  /* ---- trace strip ---- */
+
+  /**
+   * Transport for playing a trace.
+   *
+   * Hidden entirely when the document has no traces: an empty transport control
+   * is a promise of something that is not there, and traces are the one feature
+   * most documents will not use.
+   *
+   * A trace, once chosen, focuses its own path — the parts a request touches
+   * stand out and the rest recede. That makes "no trace chosen" a state the user
+   * has to be able to get back to, so it is the first entry in the list rather
+   * than an extra button. The first version instead re-applied focus on every
+   * document change, which meant that opening any document containing a trace
+   * dimmed two thirds of it permanently, with no way to turn it off.
+   */
+  const NO_TRACE = ''
+
+  function refreshTraceBar(): void {
+    const traces = history.doc.traces
+    ui.traceBar.classList.toggle('hidden', traces.length === 0)
+    if (!traces.length) {
+      if (reconciler.trace.resolution) deactivateTrace()
+      return
+    }
+
+    /* Preserved across a re-sync: a node move rebuilds routes and would
+       otherwise snap the selector back to the top mid-playback. */
+    const keep = ui.tracePick.value
+    ui.tracePick.replaceChildren()
+    for (const [value, label] of [
+      [NO_TRACE, '— no trace —'],
+      ...traces.map((t) => [t.id, t.label || t.id]),
+    ] as Array<[string, string]>) {
+      const o = document.createElement('option')
+      o.value = value
+      o.textContent = label
+      ui.tracePick.append(o)
+    }
+    ui.tracePick.value = traces.some((t) => t.id === keep) ? keep : NO_TRACE
+    describeTrace()
+
+    /* An active trace is deliberately left loaded and playing across a document
+       change. Re-loading would rewind it to the start, so every keystroke in the
+       inspector would restart the request — and it is unnecessary, because the
+       reconciler refreshes the curves itself when a route actually moves. */
+    if (ui.tracePick.value === NO_TRACE) deactivateTrace()
+  }
+
+  /** Describe the selected trace without playing or focusing it. */
+  function describeTrace(): void {
+    const t = history.doc.traces.find((x) => x.id === ui.tracePick.value)
+    if (!t) {
+      ui.traceInfo.textContent = ''
+      ui.traceInfo.classList.remove('warn')
+      ui.traceInfo.title = ''
+      ui.tracePlay.disabled = true
+      return
+    }
+    /* Pure: resolves against the live routes and touches nothing. */
+    const res = reconciler.trace.resolve(t)
+    const hops = `${res.hops.length} hop${res.hops.length === 1 ? '' : 's'}`
+    ui.traceInfo.textContent = res.gaps.length
+      ? `${hops} · ${res.gaps.length} gap${res.gaps.length === 1 ? '' : 's'}`
+      : hops
+    /* Gaps are named, not hidden. A path whose hops do not all exist is the
+       normal result of writing one by hand, and the reader has to know which
+       part of the picture is missing rather than assume it is complete. */
+    ui.traceInfo.classList.toggle('warn', res.gaps.length > 0)
+    ui.traceInfo.title = res.gaps.length
+      ? 'No connector for: ' + res.gaps.map((g) => `${g.from} → ${g.to}`).join(', ')
+      : ''
+    ui.tracePlay.disabled = !res.playable
+  }
+
+  function activateTrace(): void {
+    const t = history.doc.traces.find((x) => x.id === ui.tracePick.value)
+    if (!t) return deactivateTrace()
+    reconciler.trace.load(t)
+    reconciler.setFocus(t.path)
+    setPlaying(false)
+    ui.traceScrub.value = '0'
+  }
+
+  function deactivateTrace(): void {
+    reconciler.trace.stop()
+    setPlaying(false)
+    reconciler.setFocus(null)
+    ui.traceScrub.value = '0'
+  }
+
+  function setPlaying(on: boolean): void {
+    if (on) reconciler.trace.play()
+    else reconciler.trace.pause()
+    ui.tracePlay.textContent = on ? 'Pause' : 'Play'
+    ui.tracePlay.setAttribute('aria-pressed', String(on))
+  }
+
+  ui.tracePick.addEventListener('change', () => {
+    describeTrace()
+    if (ui.tracePick.value === NO_TRACE) deactivateTrace()
+    else activateTrace()
+  })
+  ui.tracePlay.addEventListener('click', () => {
+    /* Pressing play with nothing loaded is a request to play the selection. */
+    if (!reconciler.trace.resolution) activateTrace()
+    setPlaying(!reconciler.trace.isPlaying)
+  })
+  ui.traceScrub.addEventListener('input', () => {
+    if (!reconciler.trace.resolution) activateTrace()
+    setPlaying(false)
+    reconciler.trace.seek(Number(ui.traceScrub.value) / 1000)
+  })
+
   ui.png.addEventListener('click', () => {
     /* Hide the editor's own scaffolding; a published diagram wants the parts. */
     const url = renderPng(stage.renderer, stage.scene, camera, {
@@ -1620,10 +1812,17 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
     reconciler.rebuildLabels()
   })
 
+  refreshTraceBar()
+
   const timer = new THREE.Timer()
   stage.renderer.setAnimationLoop(() => {
     timer.update()
     reconciler.tick(timer.getElapsed())
+    /* The scrubber follows playback rather than driving it. Written only while
+       playing, so dragging it is never fought by the frame that lands next. */
+    if (reconciler.trace.isPlaying) {
+      ui.traceScrub.value = String(Math.round(reconciler.trace.progress * 1000))
+    }
     controls.update()
     /* Labels track the view, not the document, so they update per frame. */
     reconciler.orientLabels(camera)

@@ -34,6 +34,25 @@ export interface SnapshotOptions {
   /** World units of clearance around the diagram. */
   padding?: number
   /**
+   * Nodes to emphasise. Everything else dims toward the backdrop.
+   *
+   * The argument the picture is making, held apart from the document making it:
+   * one diagram supports as many framings as there are subsets worth pointing
+   * at, and rendering six of them should not mean six documents. Omit — or pass
+   * an empty list — for no emphasis at all.
+   */
+  focus?: Iterable<string>
+  /**
+   * Id of a trace to draw, paused partway through.
+   *
+   * A still of a moving thing, which is the only kind a PNG can hold — and the
+   * unit a storyboard is built from. The trace's own path is focused unless
+   * `focus` says otherwise, since the argument being made is about that path.
+   */
+  trace?: string
+  /** How far through the trace to pause, 0..1. Defaults to the midpoint. */
+  traceAt?: number
+  /**
    * Reuse an existing canvas instead of creating one.
    *
    * Rendering many documents in a row otherwise burns a WebGL context apiece,
@@ -64,7 +83,21 @@ export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
     reconciler.sync(doc)
     /* Everything merged: no node is selected or hovered, so nothing has a reason
        to carry its articulated rig. Animation is frozen either way in a still. */
-    reconciler.updateDetail({ focus: [], fullBelow: 0 })
+    reconciler.updateDetail({ detailed: [], fullBelow: 0 })
+
+    const trace = opts.trace ? doc.traces.find((t) => t.id === opts.trace) : undefined
+    if (opts.trace && !trace) console.warn(`[isoform] no trace "${opts.trace}" in this document`)
+    if (trace) {
+      const res = reconciler.trace.load(trace)
+      for (const g of res.gaps) {
+        console.warn(`[isoform] trace "${trace.id}": no connector from "${g.from}" to "${g.to}"`)
+      }
+      reconciler.trace.seek(opts.traceAt ?? 0.5)
+    }
+
+    /* An explicit focus wins; otherwise a trace focuses its own path, because a
+       picture of a request is a picture of the parts it touches. */
+    reconciler.setFocus(opts.focus ?? trace?.path ?? null)
     reconciler.setLabelsVisible(opts.labels !== false)
     stage.setGridVisible(opts.grid === true)
 

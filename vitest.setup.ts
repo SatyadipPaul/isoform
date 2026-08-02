@@ -14,6 +14,9 @@
  *
  * Installed only when there is no real `document`, so this never shadows a
  * browser environment.
+ *
+ * Text properties — `font`, `textAlign`, `textBaseline` — need no stubbing: they
+ * are plain assignments and land on the object like any other field.
  */
 
 class StubImageData {
@@ -56,6 +59,11 @@ function stubContext(canvas: { width: number; height: number }): unknown {
     scale() {},
     drawImage() {},
     putImageData() {},
+    /* Nameplates draw their text into a canvas. Like every other call here it is
+       write-only: the glyphs land in a texture, and a texture cannot move a
+       vertex. What the label *does* affect geometrically is the plate's size,
+       and that comes from `measureText` below, which returns a real width. */
+    fillText() {},
     /* Zeroed rather than absent: `heightToNormal` reads these back, and a null
        would surface as a crash far from here. Flat pixels give a flat normal
        map, which is exactly the right answer for a test that ignores shading. */

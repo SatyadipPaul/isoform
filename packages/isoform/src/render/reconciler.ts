@@ -22,11 +22,21 @@ import {
   disposeNameplate,
   makeNameplate,
   orientNameplate,
+  setNameplateDimmed,
   type Nameplate,
 } from './labels.js'
 import { setStubsVisible } from '../foundry/geometry.js'
-import { collectMaterials, overrideMaterials, type IsoMaterial } from '../foundry/materials.js'
-import { Router } from '../route/router.js'
+import { releaseMaterial, type IsoMaterial } from '../foundry/materials.js'
+import {
+  appearanceKey,
+  appearanceMaterials,
+  collectBaselines,
+  paint,
+  type Appearance,
+} from '../foundry/appearance.js'
+import { Router, groupPortBox } from '../route/router.js'
+import { boxPorts, portBoxOf, type PortBox } from '../parts/registry.js'
+import { TracePlayer } from './trace.js'
 import { buildEdge } from '../route/styles.js'
 import type { PortId } from '../parts/types.js'
 
@@ -48,11 +58,23 @@ export interface NodeView {
   label?: Nameplate
   /** Snapshot of the node as last rendered, for cheap change detection. */
   last: DocNode
+  /** `appearanceKey` of what is currently painted on this node. */
+  appearance: string
+  /**
+   * Private material clones this node owns.
+   *
+   * Almost every appearance clone is shared through the module cache, but
+   * materials built `unique` — the ones an update callback mutates per frame —
+   * must not be, so their clones belong to the node and die with it.
+   */
+  owned: IsoMaterial[]
 }
 
 interface GroupView {
   group: THREE.Group
   proxy: THREE.Mesh
+  /** Connector anchors on the boundary walls, as a part has on its faces. */
+  anchors: THREE.Mesh[]
   label?: Nameplate
   last: DocGroup
 }
@@ -70,6 +92,17 @@ interface EdgeView {
   /** Identity of the geometry currently built, so unchanged routes are left alone. */
   fingerprint: string
   update?: (t: number) => void
+  /** Whether both endpoints are outside the focus set. */
+  dimmed?: boolean
+  /**
+   * The resolved route, in world space.
+   *
+   * Kept because anything that travels a connector — a trace packet, today —
+   * has to follow the line that was actually drawn. Recomputing it would mean
+   * re-running the router, and re-deriving it from the tube geometry would mean
+   * reading back a buffer. The router already produced it; hold on to it.
+   */
+  points: THREE.Vector3[]
 }
 
 /** Cheap identity for a resolved route. Quantised so float noise is not a change. */
@@ -146,6 +179,8 @@ export class Reconciler {
   readonly groupLayer = new THREE.Group()
   readonly edgePickLayer = new THREE.Group()
   readonly groupPickLayer = new THREE.Group()
+  /** Trace packets and their markers. Last, so they read over the diagram. */
+  readonly traceLayer = new THREE.Group()
 
   private nodes = new Map<string, NodeView>()
   private groups = new Map<string, GroupView>()
@@ -161,6 +196,18 @@ export class Reconciler {
   private mergedIds = new Set<string>()
   /** Connectors re-tubed on the last sync. Diagnostics only. */
   lastRebuildCount = 0
+  /**
+   * Nodes currently carrying emphasis, or null when emphasis is off.
+   *
+   * Null and "every node" are the same picture but not the same state: with
+   * emphasis off nothing is dimmed, so `setFocus([])` clears rather than dimming
+   * the entire diagram, which no caller has ever wanted.
+   */
+  private focus: Set<string> | null = null
+  /** Absolute time of the previous `tick`, for deriving elapsed seconds. */
+  private lastTick: number | null = null
+  /** Drives trace playback. Owned here because routes move and it has to follow. */
+  readonly trace: TracePlayer
 
   /** Routes recomputed on the last sync, as opposed to reused. Diagnostics. */
   get lastRoutesRecomputed(): number {
@@ -173,6 +220,8 @@ export class Reconciler {
   ) {
     this.anchorGeo = opts.anchorGeometry ?? new THREE.SphereGeometry(0.085, 16, 12)
     this.batcher = new NodeBatcher(this.batchLayer)
+    this.trace = new TracePlayer(this)
+    this.traceLayer.add(this.trace.group)
     /* Groups first so their translucent volumes sort behind the parts inside. */
     scene.add(
       this.groupLayer,
@@ -183,6 +232,7 @@ export class Reconciler {
       this.groupPickLayer,
       this.labelLayer,
       this.anchorLayer,
+      this.traceLayer,
     )
   }
 
@@ -243,8 +293,33 @@ export class Reconciler {
     return [...this.nodes.values()].map((v) => v.proxy)
   }
 
+  /** Connector anchors for an endpoint — a part or a boundary. */
   anchorsOf(id: string): THREE.Mesh[] {
-    return this.nodes.get(id)?.anchors ?? []
+    return this.nodes.get(id)?.anchors ?? this.groups.get(id)?.anchors ?? []
+  }
+
+  /** Ids that can terminate a connector: every part, and every boundary. */
+  get endpointIds(): string[] {
+    return [...this.nodes.keys(), ...this.groups.keys()]
+  }
+
+  /** The footprint an endpoint presents to the router, for snapping. */
+  portBoxFor(id: string): { box: PortBox; origin: THREE.Vector3; yaw: number } | null {
+    const n = this.nodes.get(id)
+    if (n) {
+      return {
+        box: portBoxOf(n.last.type),
+        origin: new THREE.Vector3(n.last.pos[0], n.last.y ?? 0, n.last.pos[1]),
+        yaw: n.last.rot,
+      }
+    }
+    const g = this.groups.get(id)
+    if (!g) return null
+    return {
+      box: groupPortBox(g.last),
+      origin: new THREE.Vector3(g.last.pos[0], 0, g.last.pos[1]),
+      yaw: 0,
+    }
   }
 
   /**
@@ -302,16 +377,17 @@ export class Reconciler {
       }
       const shifted = this.applyTransform(view, n)
       if (shifted) moved.add(n.id)
-      const retinted = view.last.tint !== n.tint
-      if (retinted) this.applyTint(view, n)
+      const restyled = appearanceKey(this.appearanceOf(n)) !== view.appearance
+      if (restyled) this.applyAppearance(view, n)
       if (view.last.label !== n.label || view.last.sublabel !== n.sublabel) {
         this.applyLabel(view, n)
       }
       view.last = n
-      /* A move only rewrites this node's matrix; a retint moves it to a different
-         batch. Nodes that did neither are not touched — that is what keeps a drag
-         in a large diagram from costing a hundred and fifty buffer writes. */
-      if (retinted) this.syncBatch(view, n)
+      /* A move only rewrites this node's matrix; a change of appearance moves it
+         to a different batch. Nodes that did neither are not touched — that is
+         what keeps a drag in a large diagram from costing a hundred and fifty
+         buffer writes. */
+      if (restyled) this.syncBatch(view, n)
       else if (shifted && view.detail === 'merged') {
         view.group.updateMatrixWorld(true)
         this.batcher.move(n.id, view.group.matrixWorld)
@@ -344,6 +420,103 @@ export class Reconciler {
   tick(t: number): void {
     for (const v of this.nodes.values()) if (v.detail === 'full') v.update?.(t)
     for (const u of this.edgeUpdaters) u(t)
+    /* The trace player works in elapsed seconds, not absolute ones — playback
+       has a duration, and a request that took 900ms should take about 900ms to
+       watch however long the page has been open. The first tick has no previous
+       time to subtract, and the clamp also swallows the jump after a tab has
+       been backgrounded, which would otherwise teleport the packet. */
+    if (this.lastTick !== null) this.trace.tick(Math.min(t - this.lastTick, 0.1))
+    this.lastTick = t
+  }
+
+  /**
+   * Emphasise a subset: everything outside it dims toward the backdrop.
+   *
+   * View state, deliberately not document state. The same document supports as
+   * many arguments as there are subsets worth pointing at, and none of them is a
+   * property of the system being drawn.
+   *
+   * Note this is emphasis, not detail. `updateDetail` also takes a set of ids
+   * and means something else entirely — which parts get their articulated rig.
+   * A node is routinely in one set and not the other.
+   */
+  setFocus(ids: Iterable<string> | null): void {
+    const next = ids ? new Set(ids) : null
+    this.focus = next && next.size ? next : null
+    for (const v of this.nodes.values()) {
+      if (appearanceKey(this.appearanceOf(v.last)) === v.appearance) continue
+      this.applyAppearance(v, v.last)
+      this.syncBatch(v, v.last)
+    }
+    this.applyFocusToEdgesAndLabels(this.doc)
+    /* The merged connector buffer holds baked copies of materials that just
+       changed, and `mergeEdges` skips a rebuild when membership and geometry are
+       both unchanged — which is exactly this case. Drop it so the next pass has
+       to concatenate again, this time splitting on the substituted materials. */
+    if (this.edgeMerged) {
+      this.dropEdgeMerge()
+      this.mergeEdges(new Set())
+    }
+  }
+
+  /** Which nodes carry emphasis, or null when emphasis is off. */
+  get focused(): ReadonlySet<string> | null {
+    return this.focus
+  }
+
+  /**
+   * The route a connector currently follows, in world space.
+   *
+   * The line as drawn, not as requested: lane allocation and anchor fanning both
+   * move it, so anything travelling along a connector has to ask rather than
+   * recompute the straight path between two parts.
+   */
+  routeOf(edgeId: string): readonly THREE.Vector3[] | null {
+    return this.edges.get(edgeId)?.points ?? null
+  }
+
+  /**
+   * The connector joining two nodes, and whether it runs the way asked.
+   *
+   * `forward` is false when the edge is declared `b -> a` and the caller wants
+   * to go `a → b`. Traces are written the way someone would say them out loud,
+   * so a path routinely traverses an edge against its declared direction — a
+   * cache read replies to the service that asked.
+   *
+   * Only routed connectors are considered. An edge in the document that has not
+   * been resolved yet has no line to travel.
+   */
+  /**
+   * Where a node stands and how far its silhouette reaches.
+   *
+   * The radius comes from the measured build rather than the declared footprint,
+   * because a few parts overhang what they declare — and anything ringing a part
+   * has to clear what is actually drawn, not what the manifest claims.
+   */
+  anchorOf(nodeId: string): { position: THREE.Vector3; radius: number } | null {
+    const v = this.nodes.get(nodeId)
+    if (!v) return null
+    const n = v.last
+    const box = measure(n.type)
+    const reach = Math.max(
+      Math.abs(box.max.x),
+      Math.abs(box.min.x),
+      Math.abs(box.max.z),
+      Math.abs(box.min.z),
+    )
+    return {
+      position: new THREE.Vector3(n.pos[0], n.y ?? 0, n.pos[1]),
+      radius: reach * (n.scale ?? 1),
+    }
+  }
+
+  edgeBetween(a: string, b: string): { id: string; forward: boolean } | null {
+    for (const e of this.doc?.edges ?? []) {
+      if (!this.edges.has(e.id)) continue
+      if (e.from.node === a && e.to.node === b) return { id: e.id, forward: true }
+      if (e.from.node === b && e.to.node === a) return { id: e.id, forward: false }
+    }
+    return null
   }
 
   /**
@@ -358,13 +531,17 @@ export class Reconciler {
    * does not carry envelopes along its channel, and a merged `balancer`'s vane
    * holds still. They resume the moment you select or hover them.
    */
-  updateDetail(opts: { focus?: Iterable<string>; fullBelow?: number } = {}): void {
+  updateDetail(opts: { detailed?: Iterable<string>; fullBelow?: number } = {}): void {
     const fullBelow = opts.fullBelow ?? 24
     const everythingFull = this.nodes.size <= fullBelow
-    const focus = new Set(opts.focus ?? [])
+    /* Named `detailed`, not `focus`. This set is about draw cost — which parts
+       are worth their articulated rig — and `setFocus` is about emphasis. They
+       are routinely different sets, and one name for both invites passing the
+       wrong one, which fails silently in each direction. */
+    const detailed = new Set(opts.detailed ?? [])
 
     for (const v of this.nodes.values()) {
-      const want = everythingFull || focus.has(v.id) ? 'full' : 'merged'
+      const want = everythingFull || detailed.has(v.id) ? 'full' : 'merged'
       if (want === v.detail) continue
       v.detail = want
       v.full.visible = want === 'full'
@@ -421,6 +598,11 @@ export class Reconciler {
        batcher. What stays per-node is the transparent and line work the merge
        pass could not fold, which still has to move with the carrier. */
     const carrier = new THREE.Group()
+    /* The pick proxy has carried a `nodeId` since selection was built; the
+       carrier holding the actual geometry had nothing. Anything walking the
+       scene — a test, a debugger, an exporter — otherwise has to infer which
+       node a group belongs to from its position in `nodeLayer.children`. */
+    carrier.userData.nodeId = n.id
     const merged = instantiateMerged(mergedFor(n.type), 'lines')
     carrier.add(part.group, merged)
     part.group.visible = false
@@ -461,10 +643,12 @@ export class Reconciler {
       anchors,
       update: part.update,
       last: n,
+      appearance: '',
+      owned: [],
     }
     this.nodes.set(n.id, view)
     this.applyTransform(view, n)
-    if (n.tint) this.applyTint(view, n)
+    this.applyAppearance(view, n)
     this.applyLabel(view, n)
     this.syncBatch(view, n)
   }
@@ -483,7 +667,7 @@ export class Reconciler {
       return
     }
     v.group.updateMatrixWorld(true)
-    this.batcher.set(n.id, n.type, n.tint, v.stubsShown, v.group.matrixWorld)
+    this.batcher.set(n.id, n.type, this.appearanceOf(n), v.stubsShown, v.group.matrixWorld)
   }
 
   /** (Re)build a node's nameplate. Cheap: label textures are cached by text. */
@@ -494,6 +678,10 @@ export class Reconciler {
     }
     if (!n.label) return
     v.label = makeNameplate(n.label, n.sublabel, manifestFor(n.type).cat)
+    /* A fresh plate arrives undimmed. Retyping a label neither moves the node
+       nor changes its edges, so nothing else this sync would notice — and the
+       renamed part would be the one bright label in a dimmed diagram. */
+    if (this.focus !== null && !this.focus.has(n.id)) setNameplateDimmed(v.label, true)
     this.labelLayer.add(v.label.group, v.label.stem)
   }
 
@@ -514,6 +702,7 @@ export class Reconciler {
     v.proxy.geometry.dispose()
     for (const a of v.anchors) a.removeFromParent()
     if (v.label) disposeNameplate(v.label)
+    for (const m of v.owned) releaseMaterial(m)
     this.nodes.delete(id)
   }
 
@@ -552,7 +741,21 @@ export class Reconciler {
       proxy.userData.groupId = g.id
       this.groupPickLayer.add(proxy)
 
-      const view: GroupView = { group: built.group, proxy, last: g }
+      /* A boundary carries the same four anchors a part does, so a tier can be
+         wired as one thing. Keyed on `nodeId` like a part's — the editor's
+         anchor picking and `DocEdgeEnd.node` both read that field as "endpoint",
+         and a group is one. */
+      const anchors: THREE.Mesh[] = []
+      for (const p of boxPorts(groupPortBox(g), new THREE.Vector3(g.pos[0], 0, g.pos[1]))) {
+        const m = new THREE.Mesh(this.anchorGeo, this.opts.anchorIdle)
+        m.visible = false
+        m.position.copy(p.position)
+        m.userData = { nodeId: g.id, portId: p.id, isGroup: true }
+        this.anchorLayer.add(m)
+        anchors.push(m)
+      }
+
+      const view: GroupView = { group: built.group, proxy, anchors, last: g }
       if (g.label) {
         view.label = makeNameplate(g.label, undefined, g.cat)
         this.labelLayer.add(view.label.group, view.label.stem)
@@ -568,6 +771,7 @@ export class Reconciler {
     v.group.removeFromParent()
     v.proxy.removeFromParent()
     v.proxy.geometry.dispose()
+    for (const a of v.anchors) a.removeFromParent()
     if (v.label) disposeNameplate(v.label)
     this.groups.delete(id)
   }
@@ -634,20 +838,81 @@ export class Reconciler {
     return true
   }
 
-  private applyTint(v: NodeView, n: DocNode): void {
-    if (!n.tint) return
-    const cat = manifestFor(n.type).cat
-    const sub = overrideMaterials(collectMaterials(v.group), cat, n.tint)
-    if (!sub.size) return
-    v.group.traverse((o) => {
-      const m = o as THREE.Mesh
-      if (!m.material) return
-      if (Array.isArray(m.material)) {
-        m.material = m.material.map((x) => sub.get(x as IsoMaterial) ?? x)
-      } else {
-        m.material = sub.get(m.material as IsoMaterial) ?? m.material
-      }
-    })
+  /** What this node should currently look like: its own styling, plus emphasis. */
+  private appearanceOf(n: DocNode): Appearance {
+    return { tint: n.tint, state: n.state, dim: this.focus !== null && !this.focus.has(n.id) }
+  }
+
+  /**
+   * Repaint a node's articulated build to match its appearance.
+   *
+   * Always starts from the baseline, never from what is currently assigned, so
+   * appearances replace each other rather than stacking — dimming a tinted node
+   * and then clearing the dim leaves the tint, and clearing both leaves the part
+   * as the foundry built it.
+   *
+   * Only the articulated build needs this. A merged node's colours come from the
+   * batch it sits in, which `syncBatch` selects.
+   */
+  private applyAppearance(v: NodeView, n: DocNode, force = false): void {
+    const app = this.appearanceOf(n)
+    const key = appearanceKey(app)
+    if (key === v.appearance && !force) return
+
+    for (const m of v.owned) releaseMaterial(m)
+    v.owned = []
+    v.appearance = key
+
+    if (!key) {
+      paint(v.group, null)
+      return
+    }
+
+    const sub = appearanceMaterials(collectBaselines(v.group), manifestFor(n.type).cat, app)
+    paint(v.group, sub)
+    for (const c of sub.values()) if (c.userData.unique) v.owned.push(c)
+  }
+
+  /**
+   * Dim the connectors and labels that belong to nothing in focus.
+   *
+   * Without this, focus stops at the node boundary and the result is worse than
+   * no focus at all: the brightest thing left in the frame is a connector
+   * running between two parts the reader was just told to ignore, and five
+   * nameplates shout at the same volume as the two that matter.
+   *
+   * A connector is dimmed only when *both* its endpoints are — an edge with one
+   * end in focus is part of what the focus is saying, because half of what a
+   * part does is who it talks to.
+   */
+  private applyFocusToEdgesAndLabels(doc: Doc | null): void {
+    const dim = (id: string): boolean => this.focus !== null && !this.focus.has(id)
+
+    for (const e of doc?.edges ?? []) {
+      const view = this.edges.get(e.id)
+      if (!view) continue
+      const want = dim(e.from.node) && dim(e.to.node)
+      if (view.dimmed === want) continue
+      view.dimmed = want
+      /* The category argument is inert here: it selects which materials a *tint*
+         may touch, and this appearance carries no tint. That matters because a
+         connector is not all one category — `route/styles.ts` draws the runs from
+         `link` and the flow packets from `data` — and dim has to reach both.
+         Passing `link` and having it apply to everything is the intent, not an
+         oversight to be tidied into a per-material lookup later.
+
+         Baselines make this reversible, and `mergeWorld` buckets by material — so
+         substituting *before* the merge is what lets dimmed and undimmed runs
+         fall into separate buffers with no partitioning logic here. */
+      paint(
+        view.group,
+        want ? appearanceMaterials(collectBaselines(view.group), 'link', { dim: true }) : null,
+      )
+    }
+
+    for (const v of this.nodes.values()) {
+      if (v.label) setNameplateDimmed(v.label, dim(v.id))
+    }
   }
 
   /**
@@ -679,6 +944,11 @@ export class Reconciler {
       v.merged = instantiateMerged(mergedFor(v.last.type, wantStubs), 'lines')
       v.merged.visible = v.detail === 'merged'
       v.group.add(v.merged)
+      /* The replacement arrives with shipped materials and no recorded baseline,
+         so a styled node would lose its appearance on the pieces the merge pass
+         could not fold. Forced, because the appearance itself did not change —
+         only the geometry carrying it. */
+      if (v.appearance) this.applyAppearance(v, v.last, true)
       /* Stub state is part of the batch key — with and without pipework are two
          different geometries — so gaining or losing an edge moves the node to a
          different batch. */
@@ -726,6 +996,7 @@ export class Reconciler {
         proxy,
         fingerprint: fp,
         update: built.update,
+        points: r.points.map((p) => p.clone()),
       })
       /* A route that moves during a gesture stays out of the merge until the
          gesture ends — re-concatenating the whole diagram for it would cost far
@@ -749,7 +1020,16 @@ export class Reconciler {
       .filter((u): u is (t: number) => void => !!u)
 
     this.lastRebuildCount = rebuilt
+    /* Before the merge, not after: a rebuilt connector comes back with shipped
+       materials, and `mergeWorld` buckets by material — so dimming has to be in
+       place for the concatenation to separate dimmed runs from the rest. */
+    this.applyFocusToEdgesAndLabels(doc)
     this.mergeEdges(changed)
+
+    /* A route that moved invalidates the curve a packet is travelling along.
+       Dragging a part mid-playback is exactly when this happens, and without it
+       the packet keeps following the line the connector used to take. */
+    if (changed.size) this.trace.refresh()
   }
 
   /**

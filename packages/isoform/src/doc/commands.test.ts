@@ -75,6 +75,30 @@ describe('invert', () => {
     roundTrips(seeded(), { t: 'removeEdge', id: 'e1' })
   })
 
+  it('round-trips the trace commands', () => {
+    const withTrace = apply(seeded(), {
+      t: 'addTrace',
+      trace: { id: 't1', label: 'Checkout', path: ['n1', 'n2', 'n3'], timings: [10, 20] },
+    })
+    roundTrips(seeded(), { t: 'addTrace', trace: { id: 'tX', path: ['n1', 'n2'] } })
+    roundTrips(withTrace, { t: 'removeTrace', id: 't1' })
+    roundTrips(withTrace, { t: 'updateTrace', id: 't1', props: { path: ['n1', 'n3'] } })
+    /* Removing the optional timings has to invert back to restoring them. */
+    roundTrips(withTrace, { t: 'updateTrace', id: 't1', props: { timings: null as never } })
+  })
+
+  it('leaves traces standing when a node they name is deleted', () => {
+    /* An edge to a deleted node is meaningless; a trace through one still says
+       what it said. Cascading here would silently rewrite someone's stated path
+       — and would then have to be undone exactly, for no gain. */
+    const d = apply(seeded(), {
+      t: 'addTrace',
+      trace: { id: 't1', path: ['n1', 'n2', 'n3'] },
+    })
+    const after = apply(d, { t: 'removeNode', id: 'n2' })
+    expect(after.traces[0].path).toEqual(['n1', 'n2', 'n3'])
+  })
+
   it('round-trips theme set and clear', () => {
     roundTrips(seeded(), { t: 'setTheme', cat: 'compute', hex: '#ff0000' })
     const themed = apply(seeded(), { t: 'setTheme', cat: 'compute', hex: '#ff0000' })
@@ -115,6 +139,7 @@ describe('random command sequences', () => {
       for (let step = 0; step < 12; step++) {
         const ids = cursor.nodes.map((n) => n.id)
         const eids = cursor.edges.map((e) => e.id)
+        const tids = cursor.traces.map((t) => t.id)
         const choices: Command[] = [
           { t: 'addNode', node: { ...node(`r${trial}_${step}`), type: pick(TYPES) } },
           { t: 'updateNode', id: ids.length ? pick(ids) : 'n1', props: { rot: rng() * 6 } },
@@ -125,6 +150,18 @@ describe('random command sequences', () => {
         if (eids.length) choices.push({ t: 'removeEdge', id: pick(eids) })
         if (ids.length > 1) {
           choices.push({ t: 'addEdge', edge: edge(`re${trial}_${step}`, pick(ids), pick(ids)) })
+          choices.push({
+            t: 'addTrace',
+            trace: { id: `rt${trial}_${step}`, path: [pick(ids), pick(ids)] },
+          })
+        }
+        if (tids.length) {
+          choices.push({ t: 'removeTrace', id: pick(tids) })
+          /* Both directions matter: `timings` is optional, so setting it on a
+             trace that lacks it must invert to a deletion rather than to
+             `undefined`, and that is the case `pick` exists to handle. */
+          choices.push({ t: 'updateTrace', id: pick(tids), props: { timings: [step * 10] } })
+          choices.push({ t: 'updateTrace', id: pick(tids), props: { label: `T${step}` } })
         }
 
         const cmd = pick(choices)

@@ -1,6 +1,6 @@
 {
   "name": "@satyadip28/isoform",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "description": "Machined 3D system architecture diagrams for the browser \u2014 part catalog, document model, router, renderer and a mountable editor",
   "keywords": [

@@ -8,8 +8,8 @@
  * triangle count bought 11ms of a 67ms frame, so the remaining 56ms was the
  * calls themselves.
  *
- * Every node of the same type, tint and stub state draws identical geometry with
- * identical materials, differing only by transform. That is exactly what an
+ * Every node of the same type, appearance and stub state draws identical geometry
+ * with identical materials, differing only by transform. That is exactly what an
  * `InstancedMesh` is for: one call per merged piece per *type*, not per node.
  *
  * ## What is not batched, and why
@@ -36,7 +36,8 @@
 
 import * as THREE from 'three'
 import { instanceableLoose, mergedFor } from './merge.js'
-import { overrideMaterials, type IsoMaterial } from '../foundry/materials.js'
+import { type IsoMaterial } from '../foundry/materials.js'
+import { appearanceKey, appearanceMaterials, type Appearance } from '../foundry/appearance.js'
 import { manifestFor } from '../parts/registry.js'
 import type { PartId } from '../parts/types.js'
 
@@ -63,7 +64,7 @@ interface Slice {
 interface Batch {
   key: string
   type: PartId
-  tint?: string
+  appearance: Appearance
   stubs: boolean
   slices: Slice[]
   /** Dense; index is the instance index. */
@@ -74,8 +75,8 @@ interface Batch {
 }
 
 /** One batch per distinct appearance. Anything that changes materials or geometry belongs in the key. */
-export function batchKey(type: PartId, tint: string | undefined, stubs: boolean): string {
-  return `${type}|${tint ?? ''}|${stubs ? 1 : 0}`
+export function batchKey(type: PartId, appearance: Appearance, stubs: boolean): string {
+  return `${type}|${appearanceKey(appearance)}|${stubs ? 1 : 0}`
 }
 
 export class NodeBatcher {
@@ -91,8 +92,8 @@ export class NodeBatcher {
    * Safe to call when nothing changed — it detects that the node is already in
    * the right batch and only refreshes the matrix.
    */
-  set(id: string, type: PartId, tint: string | undefined, stubs: boolean, matrix: THREE.Matrix4): void {
-    const key = batchKey(type, tint, stubs)
+  set(id: string, type: PartId, appearance: Appearance, stubs: boolean, matrix: THREE.Matrix4): void {
+    const key = batchKey(type, appearance, stubs)
     const current = this.placement.get(id)
     if (current === key) {
       this.move(id, matrix)
@@ -100,7 +101,7 @@ export class NodeBatcher {
     }
     if (current) this.vacate(id, current)
 
-    const batch = this.batches.get(key) ?? this.create(key, type, tint, stubs)
+    const batch = this.batches.get(key) ?? this.create(key, type, appearance, stubs)
     if (batch.members.length >= batch.capacity) this.grow(batch)
 
     const slot = batch.members.length
@@ -161,11 +162,11 @@ export class NodeBatcher {
 
   /* ---------------------------------------------------------------- */
 
-  private create(key: string, type: PartId, tint: string | undefined, stubs: boolean): Batch {
+  private create(key: string, type: PartId, appearance: Appearance, stubs: boolean): Batch {
     const batch: Batch = {
       key,
       type,
-      tint,
+      appearance,
       stubs,
       slices: [],
       members: [],
@@ -181,7 +182,7 @@ export class NodeBatcher {
   /** Build the InstancedMeshes for a batch at its current capacity. */
   private allocate(batch: Batch): void {
     const merged = mergedFor(batch.type, batch.stubs)
-    const sub = this.tintMap(batch)
+    const sub = this.appearanceMap(batch)
 
     const add = (
       geometry: THREE.BufferGeometry,
@@ -220,17 +221,23 @@ export class NodeBatcher {
   }
 
   /**
-   * Tint substitution for a batch, or null when it is untinted.
+   * Material substitution for a batch, or null when it wears shipped colours.
    *
-   * Reuses the same `overrideMaterials` path a per-node tint goes through, so a
-   * batched node and an articulated one of the same tint resolve to the *same*
-   * cached material rather than two that merely look alike.
+   * Reuses the same `appearanceMaterials` path an articulated node goes through,
+   * so a batched node and a full-detail one of the same appearance resolve to
+   * the *same* cached material rather than two that merely look alike.
+   *
+   * Covers the loose pieces as well as the opaque ones. Those are the small lit
+   * decals — screens, indicators, status lamps — and they are exactly what must
+   * not stay bright when a node is dimmed or down. Leaving them out would light
+   * every window in a building whose power is off.
    */
-  private tintMap(batch: Batch): Map<IsoMaterial, IsoMaterial> | null {
-    if (!batch.tint) return null
+  private appearanceMap(batch: Batch): Map<IsoMaterial, IsoMaterial> | null {
+    if (!appearanceKey(batch.appearance)) return null
     const merged = mergedFor(batch.type, batch.stubs)
-    const mats = merged.opaque.map((p) => p.material as IsoMaterial)
-    const map = overrideMaterials(mats, manifestFor(batch.type).cat, batch.tint)
+    const mats: IsoMaterial[] = merged.opaque.map((p) => p.material as IsoMaterial)
+    for (const loose of instanceableLoose(merged)) mats.push(loose.material as IsoMaterial)
+    const map = appearanceMaterials(mats, manifestFor(batch.type).cat, batch.appearance)
     return map.size ? map : null
   }
 

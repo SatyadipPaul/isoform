@@ -16,8 +16,15 @@
  *
  * Because materials are shared, mutating one retints every part using it. That
  * is exactly right for a category-wide theme change and exactly wrong for a
- * single-node override, so the two paths are separated: `setCategoryHue` for
- * the theme, `overrideMaterials` (copy-on-write) for one node.
+ * single-node override, so the two paths are separated: `setCategoryHue` mutates
+ * in place for the theme, and per-node changes are copy-on-write.
+ *
+ * `overrideMaterials` here is the copy-on-write path for a *tint* alone. The
+ * renderer no longer calls it — a node's colour is now one of three composable
+ * channels (tint, semantic state, focus dimming) resolved together by
+ * `foundry/appearance.ts`, because applying them in separate passes means the
+ * second discards the first. It stays exported: it is public API, and it is
+ * still the right answer for a caller who wants only a retint.
  */
 
 import * as THREE from 'three'
@@ -140,6 +147,15 @@ export interface MatTag {
   finish: Finish
   cat?: Category
   role?: Token
+  /**
+   * Built outside the cache because something mutates it per frame.
+   *
+   * Recorded rather than left implicit because anything that clones a material
+   * has to know: uniques all share a cache key, so a clone cache keyed on the
+   * name would hand every pulsing halo in the diagram the same instance and they
+   * would animate in lockstep off whichever node ticked last.
+   */
+  unique?: boolean
 }
 
 /** Every material carries its provenance. This is what makes retinting exact. */
@@ -312,6 +328,7 @@ export function mat(
   m.userData.finish = finish
   if (tag.cat) m.userData.cat = tag.cat
   if (tag.role) m.userData.role = tag.role
+  if (o.unique) m.userData.unique = true
   m.name = key
 
   /* Unique materials stay out of the cache but still join the category index,

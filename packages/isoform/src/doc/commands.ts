@@ -14,8 +14,8 @@
  * which is exactly what commands.test.ts asserts over random sequences.
  */
 
-import type { Doc, DocEdge, DocGroup, DocNode } from './schema.js'
-import { findEdge, findNode } from './schema.js'
+import type { Doc, DocEdge, DocGroup, DocNode, DocTrace } from './schema.js'
+import { findEdge, findNode, findTrace } from './schema.js'
 
 /**
  * `at` on the add commands is the insertion index.
@@ -34,6 +34,9 @@ export type Command =
   | { t: 'addGroup'; group: DocGroup; at?: number }
   | { t: 'removeGroup'; id: string }
   | { t: 'updateGroup'; id: string; props: Partial<Omit<DocGroup, 'id'>> }
+  | { t: 'addTrace'; trace: DocTrace; at?: number }
+  | { t: 'removeTrace'; id: string }
+  | { t: 'updateTrace'; id: string; props: Partial<Omit<DocTrace, 'id'>> }
   | { t: 'setTheme'; cat: string; hex: string | null }
   | { t: 'setView'; view: Doc['view'] }
   | { t: 'batch'; cmds: Command[] }
@@ -72,7 +75,13 @@ export function apply(doc: Doc, cmd: Command): Doc {
 
     case 'removeNode':
       /* Removing a node removes the edges that reference it, or the document
-         would carry dangling endpoints the router cannot resolve. */
+         would carry dangling endpoints the router cannot resolve.
+
+         Traces are deliberately left alone. An edge to a deleted node is
+         meaningless, but a *trace* through one still says what it always said —
+         the system used to work this way — and the player draws the hops it can
+         and names the gap. Silently rewriting someone's stated path because a
+         part was deleted is a worse answer than showing it broken. */
       return {
         ...doc,
         nodes: doc.nodes.filter((n) => n.id !== cmd.id),
@@ -101,12 +110,31 @@ export function apply(doc: Doc, cmd: Command): Doc {
       return { ...doc, groups: insert(doc.groups, cmd.group, cmd.at) }
 
     case 'removeGroup':
-      return { ...doc, groups: doc.groups.filter((g) => g.id !== cmd.id) }
+      /* Same cascade a node gets, and for the same reason: a boundary can
+         terminate a connector, so deleting one would otherwise leave an edge
+         pointing at nothing for the router to trip over. */
+      return {
+        ...doc,
+        groups: doc.groups.filter((g) => g.id !== cmd.id),
+        edges: doc.edges.filter((e) => e.from.node !== cmd.id && e.to.node !== cmd.id),
+      }
 
     case 'updateGroup':
       return {
         ...doc,
         groups: doc.groups.map((g) => (g.id === cmd.id ? merge(g, cmd.props) : g)),
+      }
+
+    case 'addTrace':
+      return { ...doc, traces: insert(doc.traces, cmd.trace, cmd.at) }
+
+    case 'removeTrace':
+      return { ...doc, traces: doc.traces.filter((t) => t.id !== cmd.id) }
+
+    case 'updateTrace':
+      return {
+        ...doc,
+        traces: doc.traces.map((t) => (t.id === cmd.id ? merge(t, cmd.props) : t)),
       }
 
     case 'setTheme': {
@@ -176,13 +204,39 @@ export function invert(doc: Doc, cmd: Command): Command {
 
     case 'removeGroup': {
       const at = doc.groups.findIndex((g) => g.id === cmd.id)
-      return at < 0 ? { t: 'batch', cmds: [] } : { t: 'addGroup', group: doc.groups[at], at }
+      if (at < 0) return { t: 'batch', cmds: [] }
+      /* Cascaded edges come back too, after the group and in ascending index
+         order so earlier insertions do not shift the ones that follow. */
+      const dropped = doc.edges
+        .map((edge, i) => ({ edge, i }))
+        .filter(({ edge }) => edge.from.node === cmd.id || edge.to.node === cmd.id)
+      return {
+        t: 'batch',
+        cmds: [
+          { t: 'addGroup', group: doc.groups[at], at },
+          ...dropped.map(({ edge, i }): Command => ({ t: 'addEdge', edge, at: i })),
+        ],
+      }
     }
 
     case 'updateGroup': {
       const group = doc.groups.find((g) => g.id === cmd.id)
       if (!group) return { t: 'batch', cmds: [] }
       return { t: 'updateGroup', id: cmd.id, props: pick(group, cmd.props) }
+    }
+
+    case 'addTrace':
+      return { t: 'removeTrace', id: cmd.trace.id }
+
+    case 'removeTrace': {
+      const at = doc.traces.findIndex((t) => t.id === cmd.id)
+      return at < 0 ? { t: 'batch', cmds: [] } : { t: 'addTrace', trace: doc.traces[at], at }
+    }
+
+    case 'updateTrace': {
+      const trace = findTrace(doc, cmd.id)
+      if (!trace) return { t: 'batch', cmds: [] }
+      return { t: 'updateTrace', id: cmd.id, props: pick(trace, cmd.props) }
     }
 
     case 'setTheme':

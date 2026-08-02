@@ -137,6 +137,90 @@ const png = renderDocument(doc, { width: 1920, preset: 'hero' })
 Measured at roughly 850ms per render; the first call pays about 3s more to warm
 the geometry and texture caches. The document is not modified.
 
+### Show a request travelling the system
+
+A **trace** is a path through the diagram, stored in the document and played as
+motion. The packet runs the actual routed connectors, hop by hop.
+
+```
+web    client   "Browser"
+api    gateway  "API"
+orders service  "Orders"
+pg     database "Postgres"
+
+web -> api
+api -> orders
+orders => pg
+
+trace "Checkout" { web -8-> api -14-> orders -310-> pg }
+```
+
+The numbers are milliseconds per hop and they are the difference between
+decoration and information. Without them the packet moves at constant speed and
+shows only the route; with them, playback is divided by **duration** rather than
+distance — so a 310 ms query visibly dominates, which is usually the whole point
+of showing the trace.
+
+Each duration sits on the hop it belongs to. A trailing array would have to be
+paired positionally, and a mispairing animates perfectly while lying about which
+hop is slow.
+
+Render a still of it:
+
+```ts
+const { doc } = parseDsl(text)
+renderDocument(doc, { trace: doc.traces[0].id, traceAt: 0.5 })
+```
+
+Traces parsed from text are given generated ids; the quoted string is the label.
+Build the document in code if you want to choose the id yourself.
+
+A hop naming two parts with no connector between them is reported rather than
+thrown — the hops that exist are drawn and the gaps are named.
+
+### Mark what is healthy, degraded or planned
+
+`tint` is a colour and means whatever you decide. `state` is a fixed vocabulary
+rendered identically everywhere, so a reader learns it once:
+
+```ts
+{ id: 'pg', type: 'database', label: 'Postgres', state: 'degraded' }
+```
+
+`healthy` · `degraded` · `down` · `new` · `deprecated` · `planned`
+
+`healthy` looks exactly like an unset state. They differ only as a claim — one
+says nothing, the other says someone checked — and a diagram where everything is
+fine must not read as one where everything is flagged.
+
+### Point at part of a diagram
+
+Emphasise a subset; everything else recedes toward the backdrop, connectors and
+nameplates included.
+
+```ts
+renderDocument(doc, { focus: ['orders', 'pg'] })
+```
+
+Focus is view state, not document state: one diagram supports as many arguments
+as there are subsets worth pointing at, and none of them is a property of the
+system being drawn.
+
+### Wire a whole tier as one thing
+
+A boundary can terminate a connector, so a line into "Backend" lands on the tier
+rather than on whichever member happens to sit nearest its edge.
+
+```
+group backend "Backend tier" { orders, pg }
+
+api     -> backend
+backend -> metrics
+```
+
+Give the group an id and either end of an edge may name it. In the editor,
+hovering a boundary reveals its four anchors and a drag lands on them.
+
 ### Mount it in React
 
 ```tsx
@@ -269,6 +353,16 @@ would be marketing rather than information design.
 | `renderDocument(doc, opts?)` | PNG data URL, no editor |
 | `serialize` / `deserialize` | Document to and from a JSON string |
 | `MANIFESTS` / `PART_IDS` | The part catalog, as data |
+| `NODE_STATES` | The semantic state vocabulary, as data |
+| `resolveEdges(doc)` | Every connector's resolved anchors and polyline |
+
+`renderDocument` options beyond width and camera:
+
+| Option | |
+|---|---|
+| `focus` | Ids to emphasise; everything else dims toward the backdrop |
+| `trace` | Id of a trace to draw, paused partway through |
+| `traceAt` | How far through that trace, `0`–`1`. Defaults to the midpoint |
 
 ## Keyboard
 
@@ -279,7 +373,8 @@ would be marketing rather than information design.
 | Move | drag — one gesture is one undo step |
 | Rotate | drag the ring, or `[` / `]`; snaps to 15°, `Alt` frees it |
 | Group | `Ctrl`+`G`, `Ctrl`+`Shift`+`G` to ungroup; boundaries nest |
-| Connect | hover for anchors, drag an anchor onto another part |
+| Connect | hover for anchors, drag an anchor onto another part or onto a boundary |
+| Play a trace | pick one in the strip along the bottom, then scrub or play |
 | Delete / duplicate | `Del` · `Ctrl`+`D` |
 | Undo / redo | `Ctrl`+`Z` · `Ctrl`+`Shift`+`Z` or `Ctrl`+`Y` |
 | Views | Hero · Iso · Top · `F` to fit |

@@ -22,12 +22,28 @@
  *
  *     group "Service tier" { orders, pg }
  *
+ *     trace "Checkout" { web -> api -> orders -> pg }
+ *     trace "Checkout" { web -12-> api -40-> orders -610-> pg }   # ms per hop
+ *
+ * The timed spelling puts each duration on the hop it belongs to rather than in
+ * a list beside the path. A trailing array would have to be paired positionally,
+ * and a mispairing animates perfectly while stating something false about which
+ * hop is slow — the one error the feature exists to reveal.
+ *
  * Positions are not expressed. A parsed document has every node at the origin
  * and is expected to be run through `layout` — which is the point: describing a
  * system should not require placing it.
  */
 
-import { emptyDoc, type Doc, type DocEdge, type DocGroup, type DocNode, type EdgeKind } from '../doc/schema.js'
+import {
+  emptyDoc,
+  type Doc,
+  type DocEdge,
+  type DocGroup,
+  type DocNode,
+  type DocTrace,
+  type EdgeKind,
+} from '../doc/schema.js'
 import { CATEGORIES } from '../foundry/materials.js'
 import { PART_IDS } from '../parts/manifests.js'
 import type { PartId } from '../parts/types.js'
@@ -70,7 +86,20 @@ export function parseDsl(text: string): DslResult {
   const nodes = new Map<string, DocNode>()
   const edges: DocEdge[] = []
   const groups: DocGroup[] = []
+  const traces: DocTrace[] = []
   let seq = 0
+
+  /**
+   * Anything naming another declaration, held back until the file is read.
+   *
+   * Declarations used to be resolved where they appeared, which made the format
+   * order-dependent in a way nobody would guess: the shipped example puts groups
+   * *after* edges, so the moment a boundary became connectable, `api -> backend`
+   * could never resolve — the group did not exist yet. Deferring the lookup
+   * fixes that and makes forward references work everywhere, which is one less
+   * rule to know either way.
+   */
+  const pending: Array<() => void> = []
 
   const lines = text.split(/\r?\n/)
   for (let i = 0; i < lines.length; i++) {
@@ -78,27 +107,83 @@ export function parseDsl(text: string): DslResult {
     const raw = stripComment(lines[i]).trim()
     if (!raw) continue
 
-    /* group "Title" { a, b, c } */
-    const gm = /^group\s+("([^"]*)"|\S+)\s*\{([^}]*)\}\s*$/.exec(raw)
+    /* group "Title" { a, b, c }  ·  group id "Title" { a, b, c }
+       The optional leading id is what makes a boundary connectable: an edge can
+       only name a group that has a name to be named by. */
+    const gm = /^group\s+(?:([A-Za-z_][\w-]*)\s+)?("([^"]*)"|\S+)\s*\{([^}]*)\}\s*$/.exec(raw)
     if (gm) {
-      const label = gm[2] ?? gm[1]
-      const members = gm[3]
+      const explicitId = gm[1]
+      const label = gm[3] ?? gm[2]
+      const members = gm[4]
         .split(',')
         .map((s) => s.trim())
         .filter(Boolean)
-      const missing = members.filter((m) => !nodes.has(m))
-      if (missing.length) {
-        issues.push({ line: lineNo, message: `unknown node(s) in group: ${missing.join(', ')}` })
+      const gid = explicitId ?? `g${++seq}`
+      if (nodes.has(gid) || groups.some((g) => g.id === gid)) {
+        issues.push({ line: lineNo, message: `duplicate id "${gid}"` })
+        continue
       }
-      groups.push({
-        id: `g${++seq}`,
+      const group: DocGroup = {
+        id: gid,
         label,
         pos: [0, 0],
         /* Box is derived by `fitGroups` once members have positions. */
         size: [4, 1.5, 4],
         cat: 'compute',
-        members: members.filter((m) => nodes.has(m)),
+        members: [],
+      }
+      groups.push(group)
+      pending.push(() => {
+        const missing = members.filter((m) => !nodes.has(m))
+        if (missing.length) {
+          issues.push({ line: lineNo, message: `unknown node(s) in group: ${missing.join(', ')}` })
+        }
+        group.members = members.filter((m) => nodes.has(m))
       })
+      continue
+    }
+
+    /* trace "Title" { a -> b -> c }, hops optionally timed as `a -12-> b`.
+       Must be tried before the edge rule below, which would otherwise see the
+       arrows inside the braces and read the whole line as one malformed edge. */
+    const tm = /^trace\s+("([^"]*)"|\S+)\s*\{([^}]*)\}\s*$/.exec(raw)
+    if (tm) {
+      const label = tm[2] ?? tm[1]
+      const body = tm[3].trim()
+      /* The duration and its leading dash are one optional unit: a plain hop is
+         `->`, a timed one is `-12->`. Making only the digits optional would
+         require a dash that a plain hop does not have, and every untimed trace
+         would parse as a single unsplit node and be rejected as too short.
+
+         Non-capturing, or `split` would interleave the durations with the ids. */
+      const path = body
+        .split(/\s*(?:-\s*\d+(?:\.\d+)?\s*)?->\s*/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      const timings = [...body.matchAll(/-\s*(\d+(?:\.\d+)?)\s*->/g)].map((m) => Number(m[1]))
+
+      if (path.length < 2) {
+        issues.push({ line: lineNo, message: 'a trace needs at least two nodes' })
+        continue
+      }
+      pending.push(() => {
+        const missing = path.filter((p) => !nodes.has(p))
+        if (missing.length) {
+          issues.push({ line: lineNo, message: `unknown node(s) in trace: ${missing.join(', ')}` })
+        }
+      })
+
+      const trace: DocTrace = { id: `t${++seq}`, label, path }
+      /* All hops timed or none. A partly timed path would have to guess at the
+         rest, and every guess is a number the diagram then states as fact. */
+      if (timings.length === path.length - 1) trace.timings = timings
+      else if (timings.length) {
+        issues.push({
+          line: lineNo,
+          message: `trace has ${timings.length} timings for ${path.length - 1} hops — time every hop or none`,
+        })
+      }
+      traces.push(trace)
       continue
     }
 
@@ -112,18 +197,23 @@ export function parseDsl(text: string): DslResult {
         issues.push({ line: lineNo, message: `edge needs a node on both sides of "${tok}"` })
         continue
       }
-      for (const id of [from, to]) {
-        if (!nodes.has(id)) issues.push({ line: lineNo, message: `unknown node "${id}"` })
+      const edge: DocEdge = {
+        id: `e${++seq}`,
+        from: { node: from },
+        to: { node: to },
+        kind,
+        route: 'auto',
       }
-      if (nodes.has(from) && nodes.has(to)) {
-        edges.push({
-          id: `e${++seq}`,
-          from: { node: from },
-          to: { node: to },
-          kind,
-          route: 'auto',
-        })
-      }
+      pending.push(() => {
+        /* Either end may name a group. A connector to a boundary wires a whole
+           tier as one thing, instead of forcing the line to land on whichever
+           member happens to sit nearest the edge of the box. */
+        const known = (id: string): boolean => nodes.has(id) || groups.some((g) => g.id === id)
+        for (const id of [from, to]) {
+          if (!known(id)) issues.push({ line: lineNo, message: `unknown node or group "${id}"` })
+        }
+        if (known(from) && known(to)) edges.push(edge)
+      })
       continue
     }
 
@@ -151,9 +241,14 @@ export function parseDsl(text: string): DslResult {
     nodes.set(id, node)
   }
 
+  /* Every cross-reference resolves here, against the whole file. Issues come out
+     in line order because that is the order they were queued in. */
+  for (const resolve of pending) resolve()
+
   doc.nodes = [...nodes.values()]
   doc.edges = edges
   doc.groups = groups
+  doc.traces = traces
   return { doc, issues }
 }
 
@@ -215,4 +310,8 @@ orders  -> metrics
 # Boundaries:  group "Label" { members }
 group "Public edge" { edge, api }
 group "Control plane" { idp, metrics }
+
+# Traces:  trace "Label" { a -> b }, or time each hop in ms:  a -12-> b
+trace "Checkout"   { web -8-> edge -22-> api -14-> orders -310-> pg }
+trace "Fulfilment" { orders -> mq -> jobs -> psp }
 `

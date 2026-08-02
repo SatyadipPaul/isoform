@@ -118,6 +118,22 @@ export const CSS = `
   color:var(--iso-ink);font-family:"IBM Plex Mono",monospace;font-size:12.5px;line-height:1.75;
   outline:none;white-space:pre;overflow:auto}
 .${ROOT} .sheet .bad{color:#F0655F}
+
+/* Trace strip. Anchored to the right of the palette rail rather than to the
+   viewport centre, so it stays centred over the *stage* rather than drifting
+   under the rail as the panel narrows. Hidden entirely when the document has no
+   traces — an empty transport control is a promise of something that isn't there. */
+.${ROOT} .trace{position:absolute;left:calc(var(--iso-rail) + 50%/2 + 8px);bottom:52px;z-index:4;
+  transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:8px 12px;
+  border:1px solid var(--iso-line);border-radius:8px;background:rgba(17,21,27,.94);
+  backdrop-filter:blur(10px);box-shadow:0 10px 34px rgba(0,0,0,.45)}
+.${ROOT} .trace select{background:#0E1116;border:1px solid var(--iso-line);color:var(--iso-ink);
+  border-radius:4px;padding:4px 6px;font:inherit;font-size:12px;max-width:190px}
+.${ROOT} .trace input[type=range]{width:210px;accent-color:var(--iso-brass);cursor:pointer}
+.${ROOT} .trace .info{font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.08em;
+  color:var(--iso-ink-3);min-width:86px}
+.${ROOT} .trace .info.warn{color:#E9A247}
+
 .${ROOT} .hidden{display:none!important}
 `
 
@@ -149,6 +165,11 @@ export interface Chrome {
   dslApply: HTMLButtonElement
   dslClose: HTMLButtonElement
   help: HTMLElement
+  traceBar: HTMLElement
+  tracePick: HTMLSelectElement
+  tracePlay: HTMLButtonElement
+  traceScrub: HTMLInputElement
+  traceInfo: HTMLElement
   dispose(): void
 }
 
@@ -267,11 +288,25 @@ export function buildChrome(container: HTMLElement, opts: ChromeOptions = {}): C
   dslText.spellcheck = false
   sheet.append(sheetHead, dslText)
 
+  /* ---- trace strip ---- */
+  const traceBar = el('div', 'trace hidden')
+  const tracePick = el('select')
+  tracePick.title = 'Trace to play'
+  const tracePlay = button('Play')
+  const traceScrub = el('input')
+  traceScrub.type = 'range'
+  traceScrub.min = '0'
+  traceScrub.max = '1000'
+  traceScrub.value = '0'
+  traceScrub.title = 'Scrub'
+  const traceInfo = el('span', 'info', '')
+  traceBar.append(tracePick, tracePlay, traceScrub, traceInfo)
+
   /* ---- help ---- */
   const help = el('div', 'help')
   help.innerHTML = HELP_HTML
 
-  root.append(canvas, bar, rail, insp)
+  root.append(canvas, bar, rail, insp, traceBar)
   if (opts.dsl !== false) root.append(sheet)
   if (opts.help !== false) root.append(help)
   container.appendChild(root)
@@ -303,6 +338,11 @@ export function buildChrome(container: HTMLElement, opts: ChromeOptions = {}): C
     dslApply,
     dslClose,
     help,
+    traceBar,
+    tracePick,
+    tracePlay,
+    traceScrub,
+    traceInfo,
     dispose: () => root.remove(),
   }
 }

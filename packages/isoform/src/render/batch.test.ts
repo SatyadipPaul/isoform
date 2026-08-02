@@ -11,6 +11,10 @@
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import { NodeBatcher, batchKey } from './batch.js'
+import type { Appearance } from '../foundry/appearance.js'
+
+/** Shipped colours: no tint, no state, not dimmed. */
+const PLAIN: Appearance = {}
 
 const at = (x: number, z: number): THREE.Matrix4 =>
   new THREE.Matrix4().makeTranslation(x, 0, z)
@@ -41,13 +45,32 @@ function counts(layer: THREE.Object3D): number[] {
 
 describe('batchKey', () => {
   it('separates anything that changes geometry or materials', () => {
-    expect(batchKey('service', undefined, true)).not.toBe(batchKey('service', undefined, false))
-    expect(batchKey('service', '#ff0000', true)).not.toBe(batchKey('service', undefined, true))
-    expect(batchKey('service', undefined, true)).not.toBe(batchKey('database', undefined, true))
+    expect(batchKey('service', PLAIN, true)).not.toBe(batchKey('service', PLAIN, false))
+    expect(batchKey('service', { tint: '#ff0000' }, true)).not.toBe(batchKey('service', PLAIN, true))
+    expect(batchKey('service', PLAIN, true)).not.toBe(batchKey('database', PLAIN, true))
   })
 
   it('is stable for the same appearance', () => {
-    expect(batchKey('service', '#abc123', true)).toBe(batchKey('service', '#abc123', true))
+    expect(batchKey('service', { tint: '#abc123' }, true)).toBe(batchKey('service', { tint: '#abc123' }, true))
+  })
+
+  it('separates state and dim, which change materials as surely as a tint does', () => {
+    expect(batchKey('service', { state: 'down' }, true)).not.toBe(batchKey('service', PLAIN, true))
+    expect(batchKey('service', { dim: true }, true)).not.toBe(batchKey('service', PLAIN, true))
+    expect(batchKey('service', { state: 'down' }, true)).not.toBe(
+      batchKey('service', { state: 'degraded' }, true),
+    )
+    /* The three axes compose, so a dimmed-and-degraded node cannot share a batch
+       with one that is merely degraded. */
+    expect(batchKey('service', { state: 'degraded', dim: true }, true)).not.toBe(
+      batchKey('service', { state: 'degraded' }, true),
+    )
+  })
+
+  it('treats healthy and unset as the same appearance', () => {
+    /* They differ as a claim about the system and not at all as a picture. A
+       document that marks every node healthy must not double the batch count. */
+    expect(batchKey('service', { state: 'healthy' }, true)).toBe(batchKey('service', PLAIN, true))
   })
 })
 
@@ -62,7 +85,7 @@ describe('NodeBatcher', () => {
   it('collapses many nodes of one type into one set of instanced meshes', () => {
     const layer = new THREE.Group()
     const b = new NodeBatcher(layer)
-    for (let i = 0; i < 40; i++) b.set('n' + i, 'service', undefined, true, at(i, 0))
+    for (let i = 0; i < 40; i++) b.set('n' + i, 'service', PLAIN, true, at(i, 0))
 
     expect(b.batchCount).toBe(1)
     /* The whole point: draw calls are per *piece*, not per node. */
@@ -74,7 +97,7 @@ describe('NodeBatcher', () => {
     const layer = new THREE.Group()
     const b = new NodeBatcher(layer)
     /* 70 crosses the 16-instance initial capacity three times over. */
-    for (let i = 0; i < 70; i++) b.set('n' + i, 'service', undefined, true, at(i, 0))
+    for (let i = 0; i < 70; i++) b.set('n' + i, 'service', PLAIN, true, at(i, 0))
 
     for (const row of slots(layer)) {
       expect(row).toHaveLength(70)
@@ -88,7 +111,7 @@ describe('NodeBatcher', () => {
   it('keeps instances dense when one is removed from the middle', () => {
     const layer = new THREE.Group()
     const b = new NodeBatcher(layer)
-    for (let i = 0; i < 5; i++) b.set('n' + i, 'service', undefined, true, at(i, 0))
+    for (let i = 0; i < 5; i++) b.set('n' + i, 'service', PLAIN, true, at(i, 0))
     b.remove('n1')
 
     for (const c of counts(layer)) expect(c).toBe(4)
@@ -105,12 +128,12 @@ describe('NodeBatcher', () => {
   it('empties cleanly and can refill', () => {
     const layer = new THREE.Group()
     const b = new NodeBatcher(layer)
-    for (let i = 0; i < 6; i++) b.set('n' + i, 'service', undefined, true, at(i, 0))
+    for (let i = 0; i < 6; i++) b.set('n' + i, 'service', PLAIN, true, at(i, 0))
     for (let i = 0; i < 6; i++) b.remove('n' + i)
     for (const c of counts(layer)) expect(c).toBe(0)
     expect(b.drawCalls).toBe(0)
 
-    b.set('again', 'service', undefined, true, at(9, 9))
+    b.set('again', 'service', PLAIN, true, at(9, 9))
     for (const c of counts(layer)) expect(c).toBe(1)
     expect(b.drawCalls).toBeGreaterThan(0)
   })
@@ -118,12 +141,12 @@ describe('NodeBatcher', () => {
   it('moves a node between batches when its appearance changes', () => {
     const layer = new THREE.Group()
     const b = new NodeBatcher(layer)
-    b.set('a', 'service', undefined, true, at(0, 0))
-    b.set('b', 'service', undefined, true, at(1, 0))
+    b.set('a', 'service', PLAIN, true, at(0, 0))
+    b.set('b', 'service', PLAIN, true, at(1, 0))
     expect(b.batchCount).toBe(1)
 
     /* Retint: 'a' must leave the untinted batch, not appear in both. */
-    b.set('a', 'service', '#ff8800', true, at(0, 0))
+    b.set('a', 'service', { tint: '#ff8800' }, true, at(0, 0))
     expect(b.batchCount).toBe(2)
 
     const live = counts(layer).filter((c) => c > 0)
@@ -133,7 +156,7 @@ describe('NodeBatcher', () => {
   it('rewrites only the moved instance', () => {
     const layer = new THREE.Group()
     const b = new NodeBatcher(layer)
-    for (let i = 0; i < 4; i++) b.set('n' + i, 'service', undefined, true, at(i, 0))
+    for (let i = 0; i < 4; i++) b.set('n' + i, 'service', PLAIN, true, at(i, 0))
     b.move('n2', at(99, 7))
 
     for (const row of slots(layer)) {
@@ -156,9 +179,9 @@ describe('NodeBatcher', () => {
   it('separates part types into their own batches', () => {
     const layer = new THREE.Group()
     const b = new NodeBatcher(layer)
-    b.set('a', 'service', undefined, true, at(0, 0))
-    b.set('b', 'database', undefined, true, at(2, 0))
-    b.set('c', 'monitor', undefined, true, at(4, 0))
+    b.set('a', 'service', PLAIN, true, at(0, 0))
+    b.set('b', 'database', PLAIN, true, at(2, 0))
+    b.set('c', 'monitor', PLAIN, true, at(4, 0))
     expect(b.batchCount).toBe(3)
   })
 
@@ -168,7 +191,7 @@ describe('NodeBatcher', () => {
        diagram would collapse onto its part's base. */
     const layer = new THREE.Group()
     const b = new NodeBatcher(layer)
-    b.set('a', 'cache', undefined, true, at(10, 0))
+    b.set('a', 'cache', PLAIN, true, at(10, 0))
 
     const positions = slots(layer).map((row) => row[0])
     expect(positions.length).toBeGreaterThan(0)
