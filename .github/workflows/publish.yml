@@ -4,6 +4,11 @@ name: Publish to npm
 # deliberate act; a push to main is not, and npm versions cannot be reused or
 # meaningfully withdrawn once they are out.
 on:
+  # A version tag is the release. Pushing `v0.3.1` publishes 0.3.1 — one
+  # deterministic command, no dialog to click, and the tag is a durable record
+  # of exactly which commit went out.
+  push:
+    tags: ['v*']
   release:
     types: [published]
   workflow_dispatch:
