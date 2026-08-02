@@ -1,0 +1,52 @@
+name: Publish to npm
+
+# Publishing is tied to a GitHub Release rather than to a push. A tag is a
+# deliberate act; a push to main is not, and npm versions cannot be reused or
+# meaningfully withdrawn once they are out.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      # The whole point of trusted publishing. GitHub mints a short-lived OIDC
+      # token for this specific workflow in this specific repository, and npm
+      # verifies it against the trusted publisher configured on the package.
+      # No npm token is stored anywhere — not in secrets, not on a laptop — so
+      # there is nothing to leak, rotate, or lose.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      # setup-node ships npm 10.x; OIDC publishing needs 11.5.1 or newer.
+      # Without this the publish falls back to looking for a token and fails
+      # with a confusing auth error rather than an obvious version one.
+      - name: Use an npm that speaks OIDC
+        run: npm install -g npm@latest
+
+      - run: npm ci
+
+      # The same gates as CI. A release should not be the first time these run,
+      # but it should be the last time they can stop a bad publish.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build:lib
+
+      # `--provenance` attaches a signed statement linking the tarball to this
+      # commit and workflow. npm shows it as a "Built and signed" badge, which
+      # is the visible half of what trusted publishing buys.
+      #
+      # No NODE_AUTH_TOKEN: the OIDC exchange above is the credential.
+      - name: Publish
+        run: npm publish -w isoform --provenance --access public

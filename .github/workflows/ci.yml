@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # Builds the library and then the demo. Catches the case where sources
+      # typecheck but the emitted package is broken — the two are not the same
+      # check, because `exports` points at built output rather than at src.
+      - name: Build
+        run: npm run build
+
+      # A packaging regression is invisible until someone installs it: a stale
+      # `files` list, an exports map pointing at something that was not emitted,
+      # a missing LICENSE. Packing on every push surfaces that here instead.
+      - name: Pack
+        run: npm pack -w isoform --dry-run
