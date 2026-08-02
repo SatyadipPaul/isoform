@@ -199,6 +199,46 @@ history.subscribe((doc) => reconciler.sync(doc))
 The document model, layout, routing and serialisation are pure and run in Node
 with no DOM — useful for validating or generating diagrams server-side.
 
+## The catalog — 24 parts
+
+![The 24 parts at palette size](docs/catalog.png)
+
+| Group | Parts |
+|---|---|
+| Compute | Service · API gateway · Load balancer · Serverless · Container · **Worker** · **Model endpoint** |
+| Data | Relational store · Cache · Object storage · Warehouse · **Search index** · **Vector store** |
+| Messaging | Queue · Event stream |
+| Edge & network | Edge node · Firewall · **DNS** |
+| Control plane | **Identity** · **Observability** · **Service registry** |
+| Client & external | Client device · **Handset** · **Third party** |
+
+Ten of these were added after auditing the catalog against the AWS, Kubernetes
+and network-diagram icon vocabularies. The gap that audit found was not breadth
+— it was that the **operational plane was entirely missing**: a queue shipped
+with nothing to consume it, and there was nowhere to put the thing that
+authenticates, the thing that watches, or the thing that knows where everything
+is. Those were being drawn as tinted services, which is as informative as not
+drawing them.
+
+The target is deliberately not parity with AWS's 900 icons. Twenty-four parts
+that look like they came from one factory beat two hundred that look like a
+clip-art folder, so each addition is modelled as the object it represents and
+has to survive the catalog's own rule: **recognisable at 40px with no label.**
+
+`ops` is a sixth category with its own colour — violet, between compute's indigo
+and edge's rose — so a control plane reads as its own layer rather than
+dissolving into the services it governs. `Category` is exported, and both the
+DSL's accepted-category set and the editor's boundary-colour dropdown derive
+from it rather than repeating the list.
+
+Two parts sit in `client` that are not clients: **Handset** and **Third party**.
+That category means *outside the system you are drawing*, and neutral slate is
+right for all three — a third-party service is not yours to colour.
+
+**Vector store is data and Model endpoint is compute.** A vector store is a
+database and an inference endpoint runs computation; giving them a bespoke hue
+would be marketing rather than information design.
+
 ## API
 
 ### `createEditor(container, options?)` → `Editor`
@@ -275,46 +315,6 @@ arrives through the consumer's own install under its own MIT terms.
 
 What follows is the engineering record: what the parts are, why the renderer is
 shaped the way it is, and the defects found along the way.
-
-## The catalog — 24 parts
-
-![The 24 parts at palette size](docs/catalog.png)
-
-| Group | Parts |
-|---|---|
-| Compute | Service · API gateway · Load balancer · Serverless · Container · **Worker** · **Model endpoint** |
-| Data | Relational store · Cache · Object storage · Warehouse · **Search index** · **Vector store** |
-| Messaging | Queue · Event stream |
-| Edge & network | Edge node · Firewall · **DNS** |
-| Control plane | **Identity** · **Observability** · **Service registry** |
-| Client & external | Client device · **Handset** · **Third party** |
-
-Ten of these were added after auditing the catalog against the AWS, Kubernetes
-and network-diagram icon vocabularies. The gap that audit found was not breadth
-— it was that the **operational plane was entirely missing**: a queue shipped
-with nothing to consume it, and there was nowhere to put the thing that
-authenticates, the thing that watches, or the thing that knows where everything
-is. Those were being drawn as tinted services, which is as informative as not
-drawing them.
-
-The target is deliberately not parity with AWS's 900 icons. Twenty-four parts
-that look like they came from one factory beat two hundred that look like a
-clip-art folder, so each addition is modelled as the object it represents and
-has to survive the catalog's own rule: **recognisable at 40px with no label.**
-
-`ops` is a sixth category with its own colour — violet, between compute's indigo
-and edge's rose — so a control plane reads as its own layer rather than
-dissolving into the services it governs. `Category` is exported, and both the
-DSL's accepted-category set and the editor's boundary-colour dropdown derive
-from it rather than repeating the list.
-
-Two parts sit in `client` that are not clients: **Handset** and **Third party**.
-That category means *outside the system you are drawing*, and neutral slate is
-right for all three — a third-party service is not yours to colour.
-
-**Vector store is data and Model endpoint is compute.** A vector store is a
-database and an inference endpoint runs computation; giving them a bespoke hue
-would be marketing rather than information design.
 
 ## Layout
 

@@ -1,6 +1,6 @@
 /** isoform — machined 3D system diagrams. */
 
-export const VERSION = '0.3.0'
+export const VERSION = '0.3.1'
 
 export * from './foundry/rng.js'
 export * from './foundry/textures.js'
