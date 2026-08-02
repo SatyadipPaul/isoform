@@ -1,0 +1,43 @@
+{
+  "name": "isoform",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Machined 3D system architecture diagrams for the browser \u2014 part catalog, document model, router, renderer and a mountable editor",
+  "keywords": [
+    "diagram",
+    "architecture",
+    "isometric",
+    "three",
+    "3d",
+    "system-design"
+  ],
+  "license": "MIT",
+  "author": "Satyadip Paul <satyadip.paul28@gmail.com>",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.build.json",
+    "prepublishOnly": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "three": ">=0.180.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.1",
+    "three": "^0.185.1"
+  }
+}

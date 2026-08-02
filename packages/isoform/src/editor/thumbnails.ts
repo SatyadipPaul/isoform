@@ -20,7 +20,7 @@ import {
   HERO_EL,
   HERO_FOV,
   type PartId,
-} from '@isoform/engine'
+} from '../index.js'
 
 export function renderThumbnails(renderer: THREE.WebGLRenderer, size = 256): Map<PartId, string> {
   const out = new Map<PartId, string>()

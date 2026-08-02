@@ -1,0 +1,112 @@
+/**
+ * Render a document to an image, with no editor and no page furniture.
+ *
+ * Everything this does can be assembled from the pieces already exported —
+ * `Stage`, `Reconciler`, `frame`, `renderPng` — and that is exactly the problem.
+ * It took fourteen statements, an off-screen canvas nobody thinks to create, a
+ * direct `three` import for one `PerspectiveCamera`, and a `dispose` that is
+ * easy to forget and leaks a WebGL context every time it is. Producing a picture
+ * from a document is a first-class thing to want; it should be one call.
+ *
+ * Runs anywhere there is a WebGL context — a headless browser in CI, a worker,
+ * a thumbnail service. It does not need a visible canvas, only a real one.
+ */
+
+import * as THREE from 'three'
+import type { Doc } from '../doc/schema.js'
+import { palette } from '../foundry/materials.js'
+import { renderPng } from '../io/png.js'
+import { HERO_FOV, PRESET_POSE, frame, frameOrtho } from './camera.js'
+import { Reconciler } from './reconciler.js'
+import { Stage } from './stage.js'
+
+export interface SnapshotOptions {
+  /** Output width in pixels. Height follows from `aspect`. */
+  width?: number
+  /** Width ÷ height. */
+  aspect?: number
+  /** Camera pose. `hero` is the locked 32° perspective; the others orthographic. */
+  preset?: 'hero' | 'iso' | 'top'
+  /** Draw the nameplates. */
+  labels?: boolean
+  /** Draw the reference grid. Off by default — a published image rarely wants it. */
+  grid?: boolean
+  /** World units of clearance around the diagram. */
+  padding?: number
+  /**
+   * Reuse an existing canvas instead of creating one.
+   *
+   * Rendering many documents in a row otherwise burns a WebGL context apiece,
+   * and browsers cap how many may be live at once — around sixteen, after which
+   * the oldest is silently killed and its output comes back blank.
+   */
+  canvas?: HTMLCanvasElement
+}
+
+/**
+ * Render `doc` and return a PNG data URL.
+ *
+ * The document is not modified. Nodes are drawn where they sit, so a document
+ * straight out of `parseDsl` — every node at the origin — wants `layout` run
+ * over it first.
+ */
+export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
+  const width = opts.width ?? 1920
+  const aspect = opts.aspect ?? 16 / 9
+  const preset = opts.preset ?? 'hero'
+  const padding = opts.padding ?? 0.6
+
+  const canvas = opts.canvas ?? document.createElement('canvas')
+  const stage = new Stage({ canvas })
+  const reconciler = new Reconciler(stage.scene, { anchorIdle: palette('link').lit('lit', 0.9) })
+
+  try {
+    reconciler.sync(doc)
+    /* Everything merged: no node is selected or hovered, so nothing has a reason
+       to carry its articulated rig. Animation is frozen either way in a still. */
+    reconciler.updateDetail({ focus: [], fullBelow: 0 })
+    reconciler.setLabelsVisible(opts.labels !== false)
+    stage.setGridVisible(opts.grid === true)
+
+    const bounds = reconciler.bounds().expandByScalar(padding)
+    const pose = PRESET_POSE[preset]
+
+    let camera: THREE.Camera
+    if (preset === 'hero') {
+      const f = frame(bounds, pose.az, pose.el, HERO_FOV, aspect)
+      const persp = new THREE.PerspectiveCamera(HERO_FOV, aspect, 0.1, 500)
+      persp.position.copy(f.position)
+      persp.lookAt(f.target)
+      camera = persp
+    } else {
+      const f = frameOrtho(bounds, pose.az, pose.el, aspect)
+      const ortho = new THREE.OrthographicCamera(
+        -f.halfHeight * aspect,
+        f.halfHeight * aspect,
+        f.halfHeight,
+        -f.halfHeight,
+        -200,
+        500,
+      )
+      ortho.position.copy(f.position)
+      ortho.lookAt(f.target)
+      camera = ortho
+    }
+    camera.updateMatrixWorld(true)
+
+    stage.fitShadow(bounds)
+    /* Nameplates billboard toward the camera, and the camera only exists now. */
+    reconciler.orientLabels(camera)
+
+    return renderPng(stage.renderer, stage.scene, camera, {
+      width,
+      aspect,
+      hide: [reconciler.anchorLayer],
+    })
+  } finally {
+    /* A WebGL context is a scarce, non-collectable resource. Released even when
+       the render throws — the alternative is a service that works for its first
+       dozen requests and then returns blank images with no error. */
+    stage.dispose()
+  }
+}

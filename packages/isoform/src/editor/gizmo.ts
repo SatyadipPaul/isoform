@@ -13,7 +13,7 @@
  */
 
 import * as THREE from 'three'
-import { mesh, palette, ringGeo, roundedBox, sphere } from '@isoform/engine'
+import { mesh, palette, ringGeo, roundedBox, sphere } from '../index.js'
 
 /** The design's rotation increment. Shared with the bracket keys. */
 export const ROT_STEP = Math.PI / 12

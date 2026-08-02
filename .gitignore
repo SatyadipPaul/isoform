@@ -7,4 +7,8 @@ dev-dist/
 
 # Local copy of the source catalog, served next to the M1 gate for
 # side-by-side comparison. Not ours to commit.
-packages/engine/dev/original.html
+#
+# Globbed on the package directory rather than naming it: this rule was pinned
+# to `packages/engine/` and stopped matching the moment that directory was
+# renamed, which would have published the file.
+packages/*/dev/original.html

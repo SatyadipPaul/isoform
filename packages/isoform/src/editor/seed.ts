@@ -6,7 +6,7 @@
  * able to build by hand through the editor and get back.
  */
 
-import { emptyDoc, fitGroups, type Doc } from '@isoform/engine'
+import { emptyDoc, fitGroups, type Doc } from '../index.js'
 
 const BASE: Doc = {
   ...emptyDoc(),

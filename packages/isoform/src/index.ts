@@ -1,6 +1,6 @@
-/** @isoform/engine — machined 3D system diagrams. */
+/** isoform — machined 3D system diagrams. */
 
-export const VERSION = '0.2.0'
+export const VERSION = '0.3.0'
 
 export * from './foundry/rng.js'
 export * from './foundry/textures.js'
@@ -27,3 +27,12 @@ export * from './render/camera.js'
 export * from './render/stage.js'
 export * from './render/reconciler.js'
 export * from './render/labels.js'
+export * from './render/snapshot.js'
+
+/* The mountable editor. `createEditor(container)` is the whole of it — see
+   editor/chrome.ts for why the DOM and styles ship with the code rather than
+   being something an embedder has to copy. */
+export { createEditor, type Editor, type EditorOptions } from './editor/editor.js'
+export { type ChromeOptions } from './editor/chrome.js'
+export { PALETTE_GROUPS, partLabel, renderThumbnails } from './editor/thumbnails.js'
+export { SEED_DOC } from './editor/seed.js'
