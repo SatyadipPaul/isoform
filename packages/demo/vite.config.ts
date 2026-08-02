@@ -12,7 +12,7 @@ export default defineConfig({
          consumers and wrong for developing the library: every edit would need a
          rebuild before the demo saw it. In this workspace the specifier resolves
          to source instead, so HMR works on the library itself. */
-      isoform: resolve(import.meta.dirname, '../isoform/src/index.ts'),
+      '@satyadip28/isoform': resolve(import.meta.dirname, '../isoform/src/index.ts'),
     },
   },
   server: { port: 5173, open: true },

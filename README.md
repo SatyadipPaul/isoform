@@ -12,7 +12,7 @@ and an editor you mount with a single call.
 ## Install
 
 ```bash
-npm install isoform three
+npm install @satyadip28/isoform three
 ```
 
 `three` is a **peer dependency**, deliberately. An app that already uses three
@@ -21,10 +21,13 @@ and ships the runtime twice.
 
 Requires WebGL2 and `three` >= 0.180.
 
+Scoped because npm refused the bare name: *"Package name too similar to
+existing package iso-form"*. Scoped packages skip that similarity check.
+
 ## Quick start
 
 ```ts
-import { createEditor } from 'isoform'
+import { createEditor } from '@satyadip28/isoform'
 
 const editor = createEditor(document.getElementById('app')!)
 ```
@@ -46,7 +49,7 @@ Text carries no positions, so run `layout` over it before showing it — that is
 the point of describing a system rather than placing it.
 
 ```ts
-import { createEditor, parseDsl, layout, fitGroups } from 'isoform'
+import { createEditor, parseDsl, layout, fitGroups } from '@satyadip28/isoform'
 
 const { doc, issues } = parseDsl(`
   web    client   "Browser"
@@ -79,7 +82,7 @@ duplex. A trailing `#` starts a comment; a trailing `#rrggbb` is a tint.
 ### Build a document in code
 
 ```ts
-import { createEditor, emptyDoc, type Doc } from 'isoform'
+import { createEditor, emptyDoc, type Doc } from '@satyadip28/isoform'
 
 const doc: Doc = emptyDoc()
 doc.nodes = [
@@ -101,7 +104,7 @@ Positions snap to 0.5u in the editor, but any value is legal.
 ### Persist what the user draws
 
 ```ts
-import { createEditor, serialize, deserialize } from 'isoform'
+import { createEditor, serialize, deserialize } from '@satyadip28/isoform'
 
 const saved = localStorage.getItem('diagram')
 const editor = createEditor(el, { doc: saved ? deserialize(saved) : undefined })
@@ -120,7 +123,7 @@ For a thumbnail service, a CI artefact, or a docs build. Needs a WebGL context �
 a headless browser will do — but no visible canvas and no user.
 
 ```ts
-import { parseDsl, layout, fitGroups, renderDocument } from 'isoform'
+import { parseDsl, layout, fitGroups, renderDocument } from '@satyadip28/isoform'
 
 const { doc } = parseDsl(source)
 const { positions } = layout(doc)
@@ -138,7 +141,7 @@ the geometry and texture caches. The document is not modified.
 
 ```tsx
 import { useEffect, useRef } from 'react'
-import { createEditor, type Doc } from 'isoform'
+import { createEditor, type Doc } from '@satyadip28/isoform'
 
 export function DiagramEditor({ doc, onChange }: {
   doc?: Doc
@@ -182,7 +185,7 @@ and its undo stack, the router, the layout pass and the whole geometry foundry.
 `createEditor` is one consumer of that, not a wrapper around it.
 
 ```ts
-import { Stage, Reconciler, History, palette } from 'isoform'
+import { Stage, Reconciler, History, palette } from '@satyadip28/isoform'
 
 const stage = new Stage({ canvas })
 const reconciler = new Reconciler(stage.scene, {
@@ -255,7 +258,7 @@ npm run pack:check # tarball, as published
 
 | Package | |
 |---|---|
-| `packages/isoform` | `isoform` — the published library |
+| `packages/isoform` | `@satyadip28/isoform` — the published library |
 | `packages/demo` | private. A `<div>` and one `createEditor` call |
 
 ## License

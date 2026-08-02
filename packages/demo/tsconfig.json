@@ -11,7 +11,7 @@
        Type-checking the demo against the same sources vite bundles is also the
        more useful check: the two agreeing is the point. */
     "paths": {
-      "isoform": ["../isoform/src/index.ts"]
+      "@satyadip28/isoform": ["../isoform/src/index.ts"]
     }
   }
 }

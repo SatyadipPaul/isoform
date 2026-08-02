@@ -9,13 +9,13 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @isoform/demo",
-    "catalog": "npm run dev -w isoform",
-    "build": "npm run build -w isoform && npm run build -w @isoform/demo",
-    "build:lib": "npm run build -w isoform",
-    "typecheck": "npm run typecheck -w isoform && npm run typecheck -w @isoform/demo",
+    "catalog": "npm run dev -w @satyadip28/isoform",
+    "build": "npm run build -w @satyadip28/isoform && npm run build -w @isoform/demo",
+    "build:lib": "npm run build -w @satyadip28/isoform",
+    "typecheck": "npm run typecheck -w @satyadip28/isoform && npm run typecheck -w @isoform/demo",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pack:check": "npm run build:lib && npm pack -w isoform --pack-destination ."
+    "pack:check": "npm run build:lib && npm pack -w @satyadip28/isoform --pack-destination ."
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

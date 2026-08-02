@@ -48,4 +48,4 @@ jobs:
       # `files` list, an exports map pointing at something that was not emitted,
       # a missing LICENSE. Packing on every push surfaces that here instead.
       - name: Pack
-        run: npm pack -w isoform --dry-run
+        run: npm pack -w @satyadip28/isoform --dry-run

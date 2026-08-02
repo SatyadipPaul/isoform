@@ -83,4 +83,4 @@ jobs:
           else
             echo "::notice::Publishing via OIDC trusted publishing — no stored token."
           fi
-          npm publish -w isoform --provenance --access public
+          npm publish -w @satyadip28/isoform --provenance --access public

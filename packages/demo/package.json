@@ -11,7 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "isoform": "*",
+    "@satyadip28/isoform": "*",
     "three": "^0.185.1"
   },
   "devDependencies": {

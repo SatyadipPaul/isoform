@@ -7,7 +7,7 @@
  * packaged.
  */
 
-import * as Isoform from 'isoform'
+import * as Isoform from '@satyadip28/isoform'
 
 const editor = Isoform.createEditor(document.getElementById('app')!, { debug: import.meta.env.DEV })
 
