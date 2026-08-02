@@ -13,6 +13,14 @@
   ],
   "license": "MIT",
   "author": "Satyadip Paul <satyadip.paul28@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SatyadipPaul/isoform.git"
+  },
+  "homepage": "https://github.com/SatyadipPaul/isoform#readme",
+  "bugs": {
+    "url": "https://github.com/SatyadipPaul/isoform/issues"
+  },
   "sideEffects": false,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
