@@ -60,6 +60,27 @@ jobs:
       # commit and workflow. npm shows it as a "Built and signed" badge, which
       # is the visible half of what trusted publishing buys.
       #
-      # No NODE_AUTH_TOKEN: the OIDC exchange above is the credential.
+      # Two auth modes, and which one runs depends only on whether the NPM_TOKEN
+      # secret exists.
+      #
+      # BOOTSTRAP (first publish only). Trusted publishing is configured on a
+      # package's settings page, and a package that has never been published has
+      # no settings page — the first OIDC attempt failed with
+      # "404 The requested resource 'isoform@0.3.0' could not be found".
+      # So the name has to be claimed once with a token.
+      #
+      # STEADY STATE. Once the package exists and the repository is registered
+      # as its trusted publisher, delete the NPM_TOKEN secret. npm then falls
+      # back to the OIDC credential minted above, and there is no long-lived
+      # token anywhere — which is the whole point, and is mandatory from
+      # January 2027 when bypass tokens stop working for publishing.
       - name: Publish
-        run: npm publish -w isoform --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::Publishing with NPM_TOKEN (bootstrap). Delete the secret once trusted publishing is configured."
+          else
+            echo "::notice::Publishing via OIDC trusted publishing — no stored token."
+          fi
+          npm publish -w isoform --provenance --access public
