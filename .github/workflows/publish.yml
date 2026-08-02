@@ -35,7 +35,20 @@ jobs:
       - name: Use an npm that speaks OIDC
         run: npm install -g npm@latest
 
-      - run: npm ci
+      # `npm install`, not `npm ci`.
+      #
+      # `npm ci` demands the lockfile satisfy the tree exactly, and a lockfile
+      # written on one OS cannot always do that on another: rolldown ships a
+      # native binding per platform, and those pull different `@emnapi`
+      # versions. Authored on Windows, this lockfile made CI fail with
+      # "Missing: @emnapi/core@1.11.3 from lock file"; regenerating it to suit
+      # Linux then broke `npm ci` on Windows the same way.
+      #
+      # `npm install` honours the lockfile for everything it can resolve and
+      # fills in the platform-specific optionals instead of failing. The cost is
+      # real — a transitive version could drift here without the lockfile
+      # changing — and it is the smaller cost than a build that cannot run.
+      - run: npm install
 
       # The same gates as CI. A release should not be the first time these run,
       # but it should be the last time they can stop a bad publish.
