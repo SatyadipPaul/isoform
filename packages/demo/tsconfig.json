@@ -1,6 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src"],
+  /* The library's ambient declarations come along with its source.
+     `paths` below points at `../isoform/src`, so this project compiles the
+     library's own files — and an ambient `declare module` is not reachable by
+     following imports, so a dependency the library types by hand (gifenc, which
+     ships none) is invisible here unless the folder is included outright. */
+  "include": ["src", "../isoform/src/types"],
   "compilerOptions": {
     "types": ["vite/client"],
     /* Resolve `isoform` to source, matching the alias in vite.config.ts.

@@ -152,6 +152,8 @@ export interface Chrome {
   tidy: HTMLButtonElement
   dslToggle: HTMLButtonElement
   png: HTMLButtonElement
+  gif: HTMLButtonElement
+  html: HTMLButtonElement
   save: HTMLButtonElement
   load: HTMLButtonElement
   file: HTMLInputElement
@@ -249,6 +251,10 @@ export function buildChrome(container: HTMLElement, opts: ChromeOptions = {}): C
   const tidy = button('Tidy')
   const dslToggle = button('Text')
   const png = button('PNG')
+  /* A still, a moving still, and the live thing — in ascending fidelity, which
+     is also the order of what a destination will accept. */
+  const gif = button('GIF')
+  const html = button('HTML')
   const save = button('Save')
   const load = button('Load')
   const file = el('input', 'hidden')
@@ -260,7 +266,7 @@ export function buildChrome(container: HTMLElement, opts: ChromeOptions = {}): C
   if (opts.dsl !== false) bar.append(sep(), tidy, dslToggle)
   else bar.append(sep(), tidy)
   bar.append(el('span', 'grow'))
-  if (opts.files !== false) bar.append(png, save, load, file)
+  if (opts.files !== false) bar.append(png, gif, html, save, load, file)
 
   /* ---- palette rail ---- */
   const rail = el('aside', 'rail')
@@ -325,6 +331,8 @@ export function buildChrome(container: HTMLElement, opts: ChromeOptions = {}): C
     tidy,
     dslToggle,
     png,
+    gif,
+    html,
     save,
     load,
     file,

@@ -16,9 +16,10 @@ import * as THREE from 'three'
 import type { Doc } from '../doc/schema.js'
 import { palette } from '../foundry/materials.js'
 import { renderPng } from '../io/png.js'
-import { HERO_FOV, PRESET_POSE, frame, frameOrtho } from './camera.js'
+import { HERO_FOV, PRESET_POSE, frame, frameOrtho, framePoints } from './camera.js'
 import { Reconciler } from './reconciler.js'
 import { Stage } from './stage.js'
+import { resolvePose, type CameraPose } from './shots.js'
 
 export interface SnapshotOptions {
   /** Output width in pixels. Height follows from `aspect`. */
@@ -27,6 +28,17 @@ export interface SnapshotOptions {
   aspect?: number
   /** Camera pose. `hero` is the locked 32° perspective; the others orthographic. */
   preset?: 'hero' | 'iso' | 'top'
+  /**
+   * An explicit camera instead of a preset. Perspective; ignores `preset`.
+   *
+   * The presets frame anything acceptably and nothing perfectly. Framing fits the
+   * diagram's axis-aligned box, so a system laid out along one axis and viewed at
+   * the hero's 34° azimuth lands on screen as a diagonal — and the corners of the
+   * box it is fitted to are empty, which is how the README hero ended up filling
+   * barely half its frame. Turning the camera to put the long axis across the
+   * frame is the fix, and it is a property of the diagram, not of the library.
+   */
+  pose?: CameraPose
   /** Draw the nameplates. */
   labels?: boolean
   /** Draw the reference grid. Off by default — a published image rarely wants it. */
@@ -52,6 +64,15 @@ export interface SnapshotOptions {
   trace?: string
   /** How far through the trace to pause, 0..1. Defaults to the midpoint. */
   traceAt?: number
+  /**
+   * Transparent background instead of the studio backdrop.
+   *
+   * `renderPng` has supported this since it was written and nothing exposed it,
+   * so every image anyone exported carried the opaque dark backdrop — dropped
+   * into a light-themed README that is a black rectangle in the middle of the
+   * page.
+   */
+  transparent?: boolean
   /**
    * Reuse an existing canvas instead of creating one.
    *
@@ -103,10 +124,32 @@ export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
 
     const bounds = reconciler.bounds().expandByScalar(padding)
     const pose = PRESET_POSE[preset]
+    /* Framed against what is drawn rather than the box around it — see
+       `framePoints`. The padding still comes from `bounds`, which is where it
+       has always been expressed. */
+    const content = reconciler.contentPoints()
+    const centre = bounds.getCenter(new THREE.Vector3())
+    const fitPerspective = (az: number, el: number) =>
+      content.length
+        ? framePoints(content, centre, az, el, HERO_FOV, aspect, 1.06 + padding / 20)
+        : frame(bounds, az, el, HERO_FOV, aspect)
 
     let camera: THREE.Camera
-    if (preset === 'hero') {
-      const f = frame(bounds, pose.az, pose.el, HERO_FOV, aspect)
+    if (opts.pose) {
+      const p = resolvePose(opts.pose)
+      const f = fitPerspective(p.az, p.el)
+      const persp = new THREE.PerspectiveCamera(HERO_FOV, aspect, 0.1, 500)
+      const target = p.target ? new THREE.Vector3(...p.target) : f.target
+      const dir = new THREE.Vector3(
+        Math.cos(p.el) * Math.sin(p.az),
+        Math.sin(p.el),
+        Math.cos(p.el) * Math.cos(p.az),
+      ).normalize()
+      persp.position.copy(target).addScaledVector(dir, f.dist * p.zoom)
+      persp.lookAt(target)
+      camera = persp
+    } else if (preset === 'hero') {
+      const f = fitPerspective(pose.az, pose.el)
       const persp = new THREE.PerspectiveCamera(HERO_FOV, aspect, 0.1, 500)
       persp.position.copy(f.position)
       persp.lookAt(f.target)
@@ -134,6 +177,7 @@ export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
     return renderPng(stage.renderer, stage.scene, camera, {
       width,
       aspect,
+      transparent: opts.transparent,
       hide: [reconciler.anchorLayer],
     })
   } finally {

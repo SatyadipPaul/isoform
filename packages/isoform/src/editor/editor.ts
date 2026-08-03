@@ -22,7 +22,13 @@ import {
   clearLabelCache,
   deserialize,
   downloadDoc,
+  downloadGif,
+  downloadHtml,
   downloadPng,
+  encodeGifAsync,
+  exportHtml,
+  renderFrames,
+  turntable,
   apply as applyCommand,
   fitGroups,
   frameInset,
@@ -49,6 +55,7 @@ import {
   type PartId,
   type PortId,
   type PortTransform,
+  type Storyboard,
 } from '../index.js'
 import { PALETTE_GROUPS, partLabel, renderThumbnails } from './thumbnails.js'
 import { ROT_STEP, RotateGizmo, degrees, normalizeAngle, snapAngle } from './gizmo.js'
@@ -1738,6 +1745,90 @@ export function createEditor(container: HTMLElement, options: EditorOptions = {}
       ],
     })
     downloadPng(url, 'diagram.png')
+  })
+
+  /* ---- GIF and HTML export ---- */
+
+  /**
+   * What to film when nobody has authored a storyboard.
+   *
+   * A trace if one is selected — the request is the story — and otherwise a slow
+   * turntable, which is the move that shows a diagram is 3D at all. Authoring
+   * shots by hand is a separate feature; this is what the button does.
+   */
+  function defaultStoryboard(): Storyboard {
+    const id = ui.tracePick.value
+    const trace = id ? history.doc.traces.find((t) => t.id === id) : undefined
+    if (trace) {
+      return {
+        from: { az: 0.6, el: 0.5, zoom: 1.2 },
+        shots: [
+          {
+            camera: { az: 1.05, el: 0.36, zoom: 0.9 },
+            duration: 5,
+            trace: trace.id,
+            focus: trace.path,
+            traceFrom: 0,
+            traceTo: 1,
+          },
+        ],
+      }
+    }
+    return turntable({ turns: 1, duration: 6 })
+  }
+
+  /** Disable a button and show progress in its label while work runs. */
+  async function withProgress(
+    button: HTMLButtonElement,
+    label: string,
+    run: (onProgress: (done: number, total: number) => void) => Promise<void>,
+  ): Promise<void> {
+    const original = button.textContent
+    button.disabled = true
+    try {
+      await run((done, total) => {
+        button.textContent = `${label} ${Math.round((done / total) * 100)}%`
+      })
+    } catch (e) {
+      console.error('[isoform] export failed', e)
+      button.textContent = 'Failed'
+      await new Promise((r) => setTimeout(r, 1200))
+    } finally {
+      button.textContent = original
+      button.disabled = false
+    }
+  }
+
+  ui.gif.addEventListener('click', () => {
+    void withProgress(ui.gif, 'GIF', async (onProgress) => {
+      const frames = await renderFrames(history.doc, {
+        ...defaultStoryboard(),
+        fps: 20,
+        width: 900,
+        labels: 'plain',
+        onProgress,
+      })
+      const bytes = await encodeGifAsync(frames, {
+        fps: 20,
+        onProgress: (done, total) => {
+          ui.gif.textContent = `Encoding ${Math.round((done / total) * 100)}%`
+        },
+      })
+      downloadGif(new Blob([bytes], { type: 'image/gif' }), 'diagram.gif')
+    })
+  })
+
+  ui.html.addEventListener('click', () => {
+    void withProgress(ui.html, 'HTML', async () => {
+      const id = ui.tracePick.value
+      downloadHtml(
+        await exportHtml(history.doc, {
+          title: 'Diagram',
+          autoplay: id || undefined,
+        }),
+        'diagram.html',
+      )
+    })
   })
 
   ui.save.addEventListener('click', () => downloadDoc(history.doc))

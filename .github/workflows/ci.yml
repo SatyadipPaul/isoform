@@ -35,6 +35,17 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Before the tests, not as part of the build.
+      #
+      # `exportHtml` inlines a prebuilt bundle of the viewer and three.js, and it
+      # is a build artifact rather than a source file — so a clean checkout does
+      # not have it and its tests skip themselves rather than fail. Skipping is
+      # right locally and wrong here: a silently skipped suite is indistinguishable
+      # from a passing one, and this is the check that the export contains what it
+      # claims to.
+      - name: Build the inlinable viewer runtime
+        run: npm run build:runtime
+
       - name: Test
         run: npm test
 

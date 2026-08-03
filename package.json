@@ -1,7 +1,7 @@
 {
   "name": "isoform-workspace",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "Development workspace for the isoform library and its demo host",
   "workspaces": [
@@ -11,12 +11,13 @@
     "dev": "npm run dev -w @isoform/demo",
     "catalog": "npm run dev -w @satyadip28/isoform",
     "build": "npm run build -w @satyadip28/isoform && npm run build -w @isoform/demo",
-    "build:lib": "npm run build -w @satyadip28/isoform",
+    "build:lib": "npm run build -w @satyadip28/isoform && npm run build:runtime",
     "typecheck": "npm run typecheck -w @satyadip28/isoform && npm run typecheck -w @isoform/demo",
     "test": "vitest run",
     "test:watch": "vitest",
     "pack:check": "npm run build:lib && npm pack -w @satyadip28/isoform --pack-destination .",
-    "readme": "node scripts/gen-package-readme.mjs"
+    "readme": "node scripts/gen-package-readme.mjs",
+    "build:runtime": "node scripts/build-viewer-runtime.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

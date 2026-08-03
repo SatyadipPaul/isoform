@@ -47,7 +47,42 @@ export function frame(
   aspect: number,
   margin = 1.06,
 ): Framing {
-  const target = bounds.getCenter(new THREE.Vector3())
+  return framePoints(boxCorners(bounds), bounds.getCenter(new THREE.Vector3()), az, el, fovDeg, aspect, margin)
+}
+
+/** The eight corners of a box. */
+export function boxCorners(b: THREE.Box3): THREE.Vector3[] {
+  const out: THREE.Vector3[] = []
+  for (const x of [b.min.x, b.max.x]) {
+    for (const y of [b.min.y, b.max.y]) {
+      for (const z of [b.min.z, b.max.z]) out.push(new THREE.Vector3(x, y, z))
+    }
+  }
+  return out
+}
+
+/**
+ * Frame an arbitrary set of points rather than a box.
+ *
+ * A bounding box around a diagram is mostly air. A system laid out as a chain
+ * occupies a thin diagonal ribbon, and the box drawn around it has eight corners
+ * of which none contain anything — so fitting the box reserves the frame for
+ * empty volume and the diagram comes out small in the middle of it. Measured on
+ * the README hero: the furthest box corner projected to 0.72 of the frame width,
+ * meaning nearly a third of the picture was held open for nothing.
+ *
+ * Handing this the corners of each part's own box instead fits what is actually
+ * drawn. `frame` keeps its box behaviour so existing callers are untouched.
+ */
+export function framePoints(
+  points: readonly THREE.Vector3[],
+  target: THREE.Vector3,
+  az: number,
+  el: number,
+  fovDeg: number,
+  aspect: number,
+  margin = 1.06,
+): Framing {
   const w = new THREE.Vector3(
     Math.cos(el) * Math.sin(az),
     Math.sin(el),
@@ -59,20 +94,42 @@ export function frame(
   const tanV = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2)
   const tanH = tanV * aspect
 
-  let dist = 0
+  /* Recentre across the frame before fitting. The point given as `target` is
+     wherever the caller thinks the middle is, and for a real diagram that is
+     rarely the middle of what ends up on screen — fitting symmetrically about
+     the wrong centre wastes on one side exactly what it runs out of on the
+     other. `u` and `v` are perpendicular to the view axis, so sliding along them
+     re-aims the camera without changing any point's depth.
+
+     For a box this is a no-op: the projected corners are symmetric about the
+     box centre, which is what `frame` passes. */
+  let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity
   const q = new THREE.Vector3()
-  for (const x of [bounds.min.x, bounds.max.x]) {
-    for (const y of [bounds.min.y, bounds.max.y]) {
-      for (const z of [bounds.min.z, bounds.max.z]) {
-        q.set(x, y, z).sub(target)
-        const along = q.dot(w)
-        dist = Math.max(dist, along + Math.abs(q.dot(u)) / tanH, along + Math.abs(q.dot(v)) / tanV)
-      }
-    }
+  for (const p of points) {
+    q.copy(p).sub(target)
+    const qu = q.dot(u)
+    const qv = q.dot(v)
+    if (qu < uMin) uMin = qu
+    if (qu > uMax) uMax = qu
+    if (qv < vMin) vMin = qv
+    if (qv > vMax) vMax = qv
+  }
+  const centred = points.length
+    ? target
+        .clone()
+        .addScaledVector(u, (uMin + uMax) / 2)
+        .addScaledVector(v, (vMin + vMax) / 2)
+    : target.clone()
+
+  let dist = 0
+  for (const p of points) {
+    q.copy(p).sub(centred)
+    const along = q.dot(w)
+    dist = Math.max(dist, along + Math.abs(q.dot(u)) / tanH, along + Math.abs(q.dot(v)) / tanV)
   }
   dist = Math.max(dist * margin, 0.5)
 
-  return { position: target.clone().addScaledVector(w, dist), target, dist }
+  return { position: centred.clone().addScaledVector(w, dist), target: centred, dist }
 }
 
 export interface Insets {

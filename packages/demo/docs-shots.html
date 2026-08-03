@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Isoform — regenerate the README images</title>
+<style>
+  body { margin: 0; background: #0E1116; color: #E7EBF2; font: 14px system-ui; padding: 20px; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  p  { color: #98A3B4; max-width: 70ch; line-height: 1.6; }
+  pre { color: #5F6A7B; font-size: 12px; white-space: pre-wrap; }
+  img { max-width: 100%; display: block; margin: 14px 0; border: 1px solid #252B36; }
+  button { font: inherit; background: transparent; color: #D9AE6B; border: 1px solid #8A6F42;
+    border-radius: 5px; padding: 7px 12px; cursor: pointer; margin-right: 8px; }
+</style>
+</head>
+<body>
+<h1>README images</h1>
+<p>
+  The images in the README are rendered from the live library rather than drawn,
+  so they cannot go stale silently. Click to regenerate and save into
+  <code>docs/</code>. Everything is deterministic — the same click gives the same
+  pixels.
+</p>
+<button id="save">Download both</button>
+<button id="sweep">Sweep camera angles</button>
+<pre id="log"></pre>
+<div id="out"></div>
+<script type="module" src="./src/docs-shots.ts"></script>
+</body>
+</html>

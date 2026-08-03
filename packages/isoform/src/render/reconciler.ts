@@ -36,6 +36,7 @@ import {
 } from '../foundry/appearance.js'
 import { Router, groupPortBox } from '../route/router.js'
 import { boxPorts, portBoxOf, type PortBox } from '../parts/registry.js'
+import { boxCorners } from './camera.js'
 import { TracePlayer } from './trace.js'
 import { buildEdge } from '../route/styles.js'
 import type { PortId } from '../parts/types.js'
@@ -783,7 +784,7 @@ export class Reconciler {
    * depends on the view rather than the document — a plate has to stay readable
    * while the user orbits, not only when something is edited.
    */
-  orientLabels(camera: THREE.Camera): void {
+  orientLabels(camera: THREE.Camera, declutterOverlaps = true): void {
     if (!this.labelLayer.visible) return
     const plates: Array<{ plate: Nameplate; top: THREE.Vector3 }> = []
     for (const v of this.nodes.values()) {
@@ -800,7 +801,11 @@ export class Reconciler {
       orientNameplate(v.label, top, camera)
       plates.push({ plate: v.label, top })
     }
-    declutter(plates, camera)
+    /* Optional because decluttering resolves overlaps along the camera's right
+       vector, and that vector turns as the camera orbits — so the arrangement it
+       settles on changes every frame and the tags visibly slide. Correct for a
+       still or a camera the user is driving; wrong for an animated export. */
+    if (declutterOverlaps) declutter(plates, camera)
   }
 
   /** Returns true when the placement actually moved. */
@@ -1152,5 +1157,47 @@ export class Reconciler {
     }
     if (box.isEmpty()) box.set(new THREE.Vector3(-2, 0, -2), new THREE.Vector3(2, 1, 2))
     return box
+  }
+
+  /**
+   * Corners of every part and boundary, rather than of the diagram as a whole.
+   *
+   * For framing. One box around the whole diagram is mostly air — a system laid
+   * out as a chain occupies a thin ribbon and the corners of the box around it
+   * hold nothing — so fitting that box reserves the picture for empty volume.
+   * These points are what is actually drawn.
+   */
+  contentPoints(): THREE.Vector3[] {
+    const out: THREE.Vector3[] = []
+    for (const v of this.groups.values()) {
+      const g = v.last
+      out.push(
+        ...boxCorners(
+          new THREE.Box3(
+            new THREE.Vector3(g.pos[0] - g.size[0] / 2, 0, g.pos[1] - g.size[2] / 2),
+            new THREE.Vector3(g.pos[0] + g.size[0] / 2, g.size[1], g.pos[1] + g.size[2] / 2),
+          ),
+        ),
+      )
+    }
+    for (const v of this.nodes.values()) {
+      const n = v.last
+      const man = manifestFor(n.type)
+      const s = n.scale ?? 1
+      const y = n.y ?? 0
+      out.push(
+        ...boxCorners(
+          new THREE.Box3(
+            new THREE.Vector3(n.pos[0] - (man.footprint.w * s) / 2, y, n.pos[1] - (man.footprint.d * s) / 2),
+            new THREE.Vector3(
+              n.pos[0] + (man.footprint.w * s) / 2,
+              y + man.height * s,
+              n.pos[1] + (man.footprint.d * s) / 2,
+            ),
+          ),
+        ),
+      )
+    }
+    return out
   }
 }

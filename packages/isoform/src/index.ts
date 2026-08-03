@@ -1,6 +1,6 @@
 /** isoform — machined 3D system diagrams. */
 
-export const VERSION = '0.4.0'
+export const VERSION = '0.5.0'
 
 export * from './foundry/rng.js'
 export * from './foundry/textures.js'
@@ -28,6 +28,11 @@ export * from './render/camera.js'
 export * from './render/stage.js'
 export * from './render/reconciler.js'
 export * from './render/trace.js'
+export * from './render/shots.js'
+export * from './render/frames.js'
+export * from './render/viewer.js'
+export * from './export/gif.js'
+export * from './export/html.js'
 export * from './render/labels.js'
 export * from './render/snapshot.js'
 

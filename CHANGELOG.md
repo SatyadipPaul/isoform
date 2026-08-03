@@ -1,5 +1,98 @@
 # Changelog
 
+## 0.5.0 — Getting a diagram out of the browser
+
+0.4 shipped traces and gave them no way out. A PNG cannot hold motion, so the
+flagship feature's only distribution channel was recording your screen. The
+deeper problem is older: a PNG throws away the one thing that makes this library
+different — the parts are modelled, and the reason to model them is that you can
+move around them.
+
+Three exports now, in descending fidelity, chosen by what the destination allows.
+
+### `createViewer(el, { doc })`
+
+The missing middle between `createEditor` (palette, inspector, undo, gizmos) and
+`renderDocument` (a camera and no interaction). Orbit, focus, traces and
+selection events; none of the authoring apparatus. Also the primitive the HTML
+export is built from.
+
+### `exportHtml` — one self-contained live file
+
+three.js, the viewer and the document inlined into a single page that fetches
+nothing. ~670 kB, which is routinely smaller than a 3840 px PNG of the same
+diagram. Exposes `window.isoform` and mirrors it over `postMessage` so a host
+page can drive it in an iframe; the document is embedded as readable JSON, so the
+file doubles as a data file.
+
+### `exportGif` — a planned camera move
+
+A GIF of a static camera is a worse PNG. Camera, focus and trace compose on **one
+clock**, sampled at the same `t`, so they cannot drift:
+
+```ts
+await exportGif(doc, { ...turntable({ turns: 1, duration: 6 }), width: 900 })
+```
+
+Three decisions carry it: interpolation in **orbit space** (lerping world
+positions sends the camera on a chord *through* the diagram), **logarithmic
+zoom** (1→4 must pass through 2, not 2.5), and **absolute azimuth** (wrapping to
+the shortest arc makes a full turn resolve to standing still).
+
+### Also
+
+- `renderFrames` returns raw RGBA for your own encoder
+- `transparent` now reachable from `renderDocument` and `editor.toPNG`. It had
+  been implemented in `renderPng` since it was written and exposed by nothing, so
+  every exported image carried the opaque dark backdrop
+- **GIF** and **HTML** buttons in the editor, with progress and a default
+  storyboard — a trace playthrough if one is selected, else a turntable
+
+### Measured, not guessed
+
+- **A 57-second export that should take 8.** `setTimeout(…, 0)` between frames is
+  clamped to one second in a background tab, and nobody watches a 120-frame
+  export — they switch tabs. A `MessageChannel` yield is a task, not a timer.
+- **Dither strength 0.35, not 0.55.** The same 80 frames encoded four ways: no
+  diffusion bands visibly, 0.35 resolves it at +46%, and 0.55 costs +139% for a
+  picture nobody can tell apart.
+- **The encode froze the tab for 6 of 20 seconds.** Now yields between frames and
+  reports progress, like the render half already did.
+
+### Framing, and the README images
+
+`frame()` fits the diagram's *bounding box*, and for a system laid out as a chain
+that box is mostly air — its eight corners contain nothing, so the fit reserved
+the picture for empty volume. Measured on the hero shot, the furthest corner
+projected to 0.72 of the frame width: nearly a third of the image was held open
+for no reason. `framePoints` fits the corners of each part instead, and recentres
+before fitting. `frame` keeps its box behaviour, and for a box the recentring is
+provably a no-op, so nothing that called it changed.
+
+The README images were hand-made for 0.3.0 and had drifted: the hero showed two
+labels both reading "Edge", filled half its frame, and depicted a version of the
+library that no longer existed; the catalog was captioned "24 parts" and rendered
+25, including the 4×4 `boundary` container that shrank everything else to specks.
+They are now rendered from the live library by a page in the demo, so they cannot
+go stale silently.
+
+`renderDocument` also gained `pose` — an arbitrary camera rather than one of the
+three presets.
+
+### Dependency
+
+First runtime dependency: `gifenc` (62 kB, no transitive deps). `gif.js` is the
+better-known name and ships a separate worker file every consumer must serve,
+which would break the library's one-call promise.
+
+It is imported by its ESM file rather than by bare specifier. gifenc declares
+both `main` (CommonJS) and `module` (ESM); a bundler picks `module` and named
+imports work, but **Node picks `main`** and cannot see them — so `exportGif` threw
+at load for anyone consuming the published package from Node, while passing every
+test here. Found by installing the packed tarball into a clean project.
+
+---
+
 ## 0.4.0 — Explanations
 
 Until now the library could draw what a system **is** and nothing about what

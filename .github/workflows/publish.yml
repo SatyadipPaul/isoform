@@ -58,6 +58,9 @@ jobs:
       # The same gates as CI. A release should not be the first time these run,
       # but it should be the last time they can stop a bad publish.
       - run: npm run typecheck
+      # The HTML export's tests skip themselves without this, and a release is
+      # the last place to discover the export ships an empty runtime.
+      - run: npm run build:runtime
       - run: npm test
       - run: npm run build:lib
 

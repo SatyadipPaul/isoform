@@ -221,6 +221,74 @@ backend -> metrics
 Give the group an id and either end of an edge may name it. In the editor,
 hovering a boundary reveals its four anchors and a drag lands on them.
 
+### Put a diagram on a page people can look around
+
+A picture throws away the one thing that makes this library different — the parts
+are modelled, and the reason to model them is that you can move around them.
+There are three exports, in descending fidelity, and which one you use is decided
+by what the destination allows.
+
+**Live, self-contained HTML.** One file: three.js, the viewer and the document
+inlined. No network, so it survives a corporate proxy, an air-gapped wiki and
+being double-clicked out of an email.
+
+```ts
+import { exportHtml, downloadHtml } from '@satyadip28/isoform'
+
+downloadHtml(await exportHtml(doc, { title: 'Checkout', autoplay: 'checkout' }))
+```
+
+~670 kB — routinely *smaller* than a 3840px PNG of the same diagram. The exported
+page exposes `window.isoform` (`focus`, `playTrace`, `setView`, `on('select')`)
+and mirrors it over `postMessage`, so a host page can drive it inside an iframe.
+The document is embedded as readable JSON, so the file doubles as a data file.
+
+> On Confluence: Cloud removed the HTML macro and Data Center ships it disabled,
+> so pasting this into page content generally will not work. **Attaching the file
+> and linking it does**, and an iframe does where hosting exists.
+
+**An animated GIF, with a planned camera move.** Renders inline anywhere, with no
+macro permission at all.
+
+```ts
+import { exportGif, turntable } from '@satyadip28/isoform'
+
+const gif = await exportGif(doc, { ...turntable({ turns: 1, duration: 6 }), width: 900 })
+```
+
+Or author the move, composing camera, focus and a trace on one clock:
+
+```ts
+await exportGif(doc, {
+  from: { az: 0.6, el: 0.5, zoom: 1.2 },
+  shots: [
+    { camera: 'iso', duration: 2 },
+    { camera: { az: 1.1, el: 0.34, zoom: 0.85 }, duration: 5,
+      trace: 'checkout', focus: ['web', 'api', 'pg'], traceTo: 1 },
+  ],
+  fps: 20, width: 900,
+})
+```
+
+Sizes are real: 6 s at 900 px is ~2.5 MB. For a moving camera, **700–900 px at
+12–20 fps** is the sweet spot. `fps` values dividing 100 (10, 20, 25) are exact —
+GIF stores frame time in centiseconds, so 15 fps is really 14.3.
+
+**A still PNG**, as before — now with `transparent: true` for a light-themed page.
+
+### Embed a viewer without the editor
+
+```ts
+import { createViewer } from '@satyadip28/isoform'
+
+const viewer = createViewer(el, { doc, autoRotate: 0.1 })
+viewer.on('select', (id) => console.log('clicked', id))
+viewer.playTrace('checkout')
+```
+
+Orbit, focus, traces and selection events — and none of the palette, inspector,
+undo stack or gizmos a reader has no use for.
+
 ### Mount it in React
 
 ```tsx
@@ -355,6 +423,11 @@ would be marketing rather than information design.
 | `MANIFESTS` / `PART_IDS` | The part catalog, as data |
 | `NODE_STATES` | The semantic state vocabulary, as data |
 | `resolveEdges(doc)` | Every connector's resolved anchors and polyline |
+| `createViewer(el, opts)` | Read-only mount: orbit, focus, traces, selection |
+| `exportHtml(doc, opts?)` | One self-contained live HTML file |
+| `exportGif(doc, opts?)` | Animated GIF of a camera move |
+| `renderFrames(doc, opts)` | Raw RGBA frames, for your own encoder |
+| `turntable(opts?)` | A slow orbit, as a storyboard |
 
 `renderDocument` options beyond width and camera:
 
@@ -363,6 +436,7 @@ would be marketing rather than information design.
 | `focus` | Ids to emphasise; everything else dims toward the backdrop |
 | `trace` | Id of a trace to draw, paused partway through |
 | `traceAt` | How far through that trace, `0`–`1`. Defaults to the midpoint |
+| `transparent` | Drop the studio backdrop, for a light-themed page |
 
 ## Keyboard
 
@@ -388,13 +462,25 @@ npm run catalog    # M1 acceptance gate     -> localhost:5174
 npm test
 npm run typecheck
 npm run build      # library, then the demo
+npm run build:runtime  # the viewer bundle exportHtml inlines
 npm run pack:check # tarball, as published
 ```
+
+`build:runtime` produces the standalone viewer that `exportHtml` embeds. It is a
+build artifact rather than a source file, so a clean checkout does not have it
+and the HTML export's tests skip themselves until it is built — CI builds it
+before running them.
+
+The images in this README are **rendered, not drawn**. Open
+`localhost:5173/docs-shots.html` and click *Download both*, then drop the files
+into `docs/`. Regenerating them is the only way they stay honest: the previous
+pair were hand-made for 0.3.0, and by 0.4 the hero was showing a version of the
+library that no longer existed.
 
 | Package | |
 |---|---|
 | `packages/isoform` | `@satyadip28/isoform` — the published library |
-| `packages/demo` | private. A `<div>` and one `createEditor` call |
+| `packages/demo` | private. A `<div>` and one `createEditor` call, plus the shot page |
 
 ## License
 

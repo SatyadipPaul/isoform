@@ -1,8 +1,8 @@
 {
   "name": "@satyadip28/isoform",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
-  "description": "Machined 3D system architecture diagrams for the browser \u2014 part catalog, document model, router, renderer and a mountable editor",
+  "description": "Machined 3D system architecture diagrams for the browser — part catalog, document model, router, renderer and a mountable editor",
   "keywords": [
     "diagram",
     "architecture",
@@ -47,5 +47,8 @@
   "devDependencies": {
     "@types/three": "^0.185.1",
     "three": "^0.185.1"
+  },
+  "dependencies": {
+    "gifenc": "^1.0.3"
   }
 }
