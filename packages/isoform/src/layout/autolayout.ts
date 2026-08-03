@@ -64,6 +64,7 @@ export function layout(doc: Doc, opts: LayoutOptions = {}): LayoutResult {
   const acyclic = breakCycles(ids, out)
   const rank = rankNodes(ids, acyclic)
   const order = orderRanks(rank, acyclic, ids, sweeps)
+  const groupOf = bandGroups(doc, order)
 
   /* Coordinates. Ranks march along +x; members stack along z.
      Positions are built from snapped *steps* rather than by snapping each
@@ -74,29 +75,220 @@ export function layout(doc: Doc, opts: LayoutOptions = {}): LayoutResult {
   const rankList = [...order.keys()].sort((a, b) => a - b)
   const stepUp = (need: number): number => Math.ceil(need / snap - 1e-9) * snap
 
+  /* Running mean depth of each group's already-placed members, so later ranks
+     can line up with it. */
+  const groupZ = new Map<string, { sum: number; n: number }>()
+
   let x = 0
   for (const r of rankList) {
     const members = order.get(r)!
-    const widths = members.map((id) => footprint(byId.get(id)!).w)
-    const depths = members.map((id) => footprint(byId.get(id)!).d)
+    /* A lane placeholder takes depth so nothing else can occupy its group's
+       band, and no width — it must not push the rank's column any wider. */
+    const widths = members.map((id) => (isLanePlaceholder(id) ? 0 : footprint(byId.get(id)!).w))
+    const depths = members.map((id) =>
+      isLanePlaceholder(id) ? laneDepth(id, doc, byId) : footprint(byId.get(id)!).d,
+    )
     const colWidth = Math.max(...widths, 0)
 
-    /* Centre-to-centre offsets down the column, each a whole grid step. */
+    /* Centre-to-centre offsets down the column, each a whole grid step.
+
+       The gap widens where one lane ends and another begins. `fitGroups` draws a
+       boundary `GROUP_PAD` beyond its members, so a neighbour parked one plain
+       node-gap away is *inside* that padding — correctly ordered into its own
+       lane and still rendered within the box. Ordering alone was never going to
+       fix it; the lane needs clearance as well as position. */
+    const bandAt = (i: number): string | undefined =>
+      isLanePlaceholder(members[i]) ? members[i].slice(PHANTOM.length) : groupOf.get(members[i])
+
     const centres: number[] = []
     let cursor = 0
     members.forEach((_, i) => {
-      if (i > 0) cursor += stepUp(depths[i - 1] / 2 + nodeGap + depths[i] / 2)
+      if (i > 0) {
+        const a = bandAt(i - 1)
+        const b = bandAt(i)
+        /* Only where a boundary is actually drawn — two ungrouped neighbours
+           need no clearance from a box that does not exist. */
+        const crossing = a !== b && (a !== undefined || b !== undefined)
+        const gap = nodeGap + (crossing ? 2 * GROUP_PAD : 0)
+        cursor += stepUp(depths[i - 1] / 2 + gap + depths[i] / 2)
+      }
       centres.push(cursor)
     })
-    /* Centre the column on the rank axis, keeping the shift on the grid. */
-    const shift = stepUp((centres[centres.length - 1] ?? 0) / 2)
+
+    /**
+     * Where to slide the whole column.
+     *
+     * Centring each rank on its own axis is the obvious rule and it is what
+     * broke grouping: a rank of two and a rank of five centre differently, so a
+     * tier ordered into the same lane in both still lands at two different
+     * depths — and its box then stretches across everything between them.
+     *
+     * When this rank contains members of a group already placed, the column is
+     * slid to line them up with where that group already sits instead. The shift
+     * stays a whole grid step, so relative spacing — which is what keeps parts
+     * from overlapping — is untouched.
+     */
+    const anchors: number[] = []
+    members.forEach((id, i) => {
+      const gid = groupOf.get(id)
+      const acc = gid ? groupZ.get(gid) : undefined
+      if (acc) anchors.push(centres[i] - acc.sum / acc.n)
+    })
+    const shift = anchors.length
+      ? round(anchors.reduce((a, b) => a + b, 0) / anchors.length, snap)
+      : stepUp((centres[centres.length - 1] ?? 0) / 2)
+
     const cx = round(x + colWidth / 2, snap)
-    members.forEach((id, i) => positions.set(id, [cx, centres[i] - shift]))
+    members.forEach((id, i) => {
+      const z = centres[i] - shift
+      /* A placeholder is not a node; it reserved depth and that is all. It still
+         reports its z, so the lane it is holding stays where the group is. */
+      const gid = isLanePlaceholder(id) ? id.slice(PHANTOM.length) : groupOf.get(id)
+      if (!isLanePlaceholder(id)) positions.set(id, [cx, z])
+      if (!gid) return
+      const acc = groupZ.get(gid) ?? { sum: 0, n: 0 }
+      acc.sum += z
+      acc.n += 1
+      groupZ.set(gid, acc)
+    })
 
     x = cx + colWidth / 2 + stepUp(rankGap)
   }
 
   return { positions, ranks: rank }
+}
+
+/**
+ * Pull each group's members into one lane, consistently across ranks.
+ *
+ * Crossing reduction optimises for edges and knows nothing about grouping, so a
+ * tier's members scatter across the depth axis — and `fitGroups` then draws a
+ * box around whatever extent they ended up occupying. The result was boxes that
+ * swallowed parts belonging to no tier at all: Netflix's "Edge tier" enclosing
+ * the client devices, a URL shortener's "Write path" enclosing the URL store.
+ * The picture asserted a containment the document never stated, which is worse
+ * than drawing no boxes.
+ *
+ * Two things have to hold. Members must be **contiguous** within each rank, so
+ * nothing is wedged between them; and each group must land in the **same lane**
+ * in every rank it spans, or its box stretches across the depth of the diagram
+ * and catches everything in between.
+ *
+ * A group's lane is its members' mean position, measured after crossing
+ * reduction and normalised per rank so ranks of different sizes are comparable.
+ * Taking it from the optimised order rather than imposing an arbitrary one keeps
+ * the edges nearly as untangled as they were.
+ *
+ * Nested groups are ignored here: `fitGroups` resolves inner boxes before outer
+ * ones, so an outer group follows its children's lanes without being banded
+ * itself.
+ */
+function bandGroups(doc: Doc, order: Map<number, string[]>): Map<string, string> {
+  /* One group per node. A part listed by two groups is banded with the first,
+     which is arbitrary but stable — and the alternative, splitting it, is not
+     available since a node has one position. */
+  const groupOf = new Map<string, string>()
+  for (const g of doc.groups) {
+    for (const m of g.members ?? []) if (!groupOf.has(m)) groupOf.set(m, g.id)
+  }
+  if (!groupOf.size) return groupOf
+
+  /* Where each node sits in its rank, on 0..1 so ranks of different sizes can
+     be averaged against each other. */
+  const place = new Map<string, number>()
+  for (const list of order.values()) {
+    list.forEach((id, i) => place.set(id, list.length > 1 ? i / (list.length - 1) : 0.5))
+  }
+
+  const lane = new Map<string, { sum: number; n: number }>()
+  /* Which ranks each group reaches across, so the lane can be held open in the
+     ranks between its members. */
+  const span = new Map<string, { min: number; max: number }>()
+  const rankOf = new Map<string, number>()
+  for (const [r, list] of order) for (const id of list) rankOf.set(id, r)
+
+  for (const [id, gid] of groupOf) {
+    const p = place.get(id)
+    if (p === undefined) continue
+    const acc = lane.get(gid) ?? { sum: 0, n: 0 }
+    acc.sum += p
+    acc.n += 1
+    lane.set(gid, acc)
+
+    const r = rankOf.get(id)!
+    const sp = span.get(gid) ?? { min: r, max: r }
+    sp.min = Math.min(sp.min, r)
+    sp.max = Math.max(sp.max, r)
+    span.set(gid, sp)
+  }
+
+  for (const [r, list] of order) {
+    /* Each group present becomes one item carrying its members in their existing
+       relative order; every ungrouped node is an item of its own. Sorting items
+       rather than nodes is what makes members contiguous. */
+    const items = new Map<string, { key: number; ids: string[] }>()
+    list.forEach((id, i) => {
+      const gid = groupOf.get(id)
+      const at = list.length > 1 ? i / (list.length - 1) : 0.5
+      if (gid) {
+        const acc = lane.get(gid)!
+        const item = items.get(gid) ?? { key: acc.sum / acc.n, ids: [] }
+        item.ids.push(id)
+        items.set(gid, item)
+      } else {
+        items.set(` ${id}`, { key: at, ids: [id] })
+      }
+    })
+
+    /* Reserve the lane in ranks the group spans but has no member in.
+       A tier whose members sit at ranks 1 and 6 is a box six ranks long, and
+       without a placeholder the ranks between it are free to put something else
+       at that depth — which lands inside the box and reads as belonging to the
+       tier. The placeholder occupies depth and nothing else. */
+    for (const [gid, sp] of span) {
+      if (r <= sp.min || r >= sp.max || items.has(gid)) continue
+      const acc = lane.get(gid)!
+      items.set(gid, { key: acc.sum / acc.n, ids: [PHANTOM + gid] })
+    }
+
+    order.set(
+      r,
+      [...items.entries()]
+        .sort((a, b) => a[1].key - b[1].key || a[0].localeCompare(b[0]))
+        .flatMap(([, item]) => item.ids),
+    )
+  }
+  return groupOf
+}
+
+/**
+ * Marks a placeholder standing in for an absent group in a rank it spans.
+ *
+ * A leading NUL cannot collide with any node id: ids come from the text format
+ * or from `nextId`, and neither can produce one.
+ */
+const PHANTOM = ' lane:'
+
+function isLanePlaceholder(id: string): boolean {
+  return id.startsWith(PHANTOM)
+}
+
+/**
+ * Depth a placeholder must hold: the widest member of the group it stands for.
+ *
+ * Anything narrower and a neighbouring part overhangs the lane and ends up
+ * inside the box after all — the reservation has to be as deep as the thing it
+ * is reserving for.
+ */
+function laneDepth(placeholder: string, doc: Doc, byId: Map<string, DocNode>): number {
+  const gid = placeholder.slice(PHANTOM.length)
+  const group = doc.groups.find((g) => g.id === gid)
+  let d = 0
+  for (const m of group?.members ?? []) {
+    const node = byId.get(m)
+    if (node) d = Math.max(d, footprint(node).d)
+  }
+  return d
 }
 
 /**
@@ -114,7 +306,16 @@ interface Extent {
   top: number
 }
 
-export function fitGroups(doc: Doc, pad = 0.55): DocGroup[] {
+/**
+ * How far a boundary is drawn beyond the members it encloses.
+ *
+ * Shared with the layout: it is the clearance a neighbouring part needs from a
+ * lane, and the two drifting apart is what puts a part inside a tier it does not
+ * belong to.
+ */
+export const GROUP_PAD = 0.55
+
+export function fitGroups(doc: Doc, pad = GROUP_PAD): DocGroup[] {
   const nodeById = new Map(doc.nodes.map((n) => [n.id, n]))
   const groupById = new Map(doc.groups.map((g) => [g.id, g]))
   const fitted = new Map<string, DocGroup>()

@@ -129,10 +129,11 @@ export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
        has always been expressed. */
     const content = reconciler.contentPoints()
     const centre = bounds.getCenter(new THREE.Vector3())
+    const margin = 1.06 + padding / 20
     const fitPerspective = (az: number, el: number) =>
       content.length
-        ? framePoints(content, centre, az, el, HERO_FOV, aspect, 1.06 + padding / 20)
-        : frame(bounds, az, el, HERO_FOV, aspect)
+        ? framePoints(content, centre, az, el, HERO_FOV, aspect, margin)
+        : frame(bounds, az, el, HERO_FOV, aspect, margin)
 
     let camera: THREE.Camera
     if (opts.pose) {

@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.6.0 — Labels you can actually read
+
+Every diagram in this release is measured against the same five reference
+architectures — Netflix, Uber, a RAG pipeline, WhatsApp and a URL shortener —
+rendered through the shipping camera and counted in pixels rather than described.
+
+### The declutter pass had never run
+
+`declutter` slides overlapping nameplates apart. Rewritten to work in screen
+space, it projected each plate through one shared scratch vector:
+
+```js
+const edge = probe.copy(c).addScaledVector(right, width / 2).project(camera)
+const top  = probe.copy(c).setY(...).project(camera)   // same object
+hw: Math.abs(edge.x - x)                               // reads the vertical probe
+```
+
+`edge` and `top` were the same object, so every plate's half-width was measured
+off the *vertical* probe and came out at roughly zero. Nothing ever registered as
+overlapping and the pass did nothing at all — silently, because a declutter that
+finds no overlaps is indistinguishable from one that finds none to fix.
+
+**Across the five: 5 colliding pairs, worst 69% of a plate buried. Now 0.**
+
+### Separation solved, not approached
+
+Pushing overlapping pairs apart and repeating does not reliably settle — each fix
+disturbs a neighbour, and six tags inside two world units were still overlapping
+after six passes. Keeping the tags in left-to-right order turns the problem into
+a chain: separate each neighbouring pair and every pair is separated, because the
+gaps accumulate. Subtracting the required gaps leaves plain isotonic regression,
+which pool-adjacent-violators solves exactly in one pass, with the least total
+movement and without ever letting one tag overtake another.
+
+### Tags draw over the model
+
+A tag is an annotation, not a prop, and a name the geometry in front of it eats
+is worse than no name. **Eleven plates were more than 5% swallowed by parts and
+trace arrows, one of them 80%. Now none.**
+
+The lift is applied to a *clone* of the plate material, because the palette hands
+the same cached material to a plate and to any part of the same category —
+setting `depthTest = false` on what the cache returns turns depth testing off on
+those parts too, and they render inside out. The clone is also renamed, since
+`appearanceMaterials` keys derived materials on the source name: sharing a name
+would let a dimmed *part* be served the depth-free twin out of that cache.
+
+### Group-aware layout
+
+Layered layout ordered nodes without regard for which group they belong to, so a
+boundary drawn around its members could enclose parts that were not members.
+Members are now banded into a contiguous lane per rank, with placeholders in the
+ranks a group spans but has no member in, columns align to the group's own
+position rather than to the centre of the rank, and the gap widens where one lane
+meets another.
+
+### A ruler that measures the picture
+
+The critique metric took each plate's *world* axis-aligned bounds. A nameplate
+billboards, so it is a tilted rectangle, and the box containing a tilted
+rectangle is much bigger than the rectangle — it reported two clearly separated
+plates as 34% overlapped. It now projects the plate's own oriented box, and
+label clipping is measured by differencing rendered frames rather than by
+raycasting a hand-modelled version of the scene.
+
 ## 0.5.0 — Getting a diagram out of the browser
 
 0.4 shipped traces and gave them no way out. A PNG cannot hold motion, so the

@@ -239,3 +239,50 @@ describe('node state', () => {
     )
   })
 })
+
+/**
+ * Tags are lifted above the model by turning depth testing off, and the material
+ * they turn it off on is shared.
+ *
+ * The palette hands the same cached material to a nameplate and to any part of
+ * the same category, so the lift is applied to a clone. That clone has to differ
+ * from its source by *name* as well as by flag, because `appearanceMaterials`
+ * caches derived materials under `<source name>::<key>`: with a shared name, the
+ * dimmed variant built for a plate is the same cache entry as the dimmed variant
+ * for a part, and whichever is built first is handed to both. A part served the
+ * plate's twin draws its far faces over its near ones.
+ *
+ * A plate on its own cannot show this — there is no part to collide with — so it
+ * has to be checked here, against a real document with focus applied.
+ */
+describe('nameplates lifted over the model', () => {
+  const walk = (scene: THREE.Scene, r: Reconciler) => {
+    const parts: THREE.Material[] = []
+    const labels: THREE.Material[] = []
+    const inLabels = (o: THREE.Object3D): boolean => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === r.labelLayer) return true
+      return false
+    }
+    scene.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (!m.isMesh || !m.material) return
+      const into = inLabels(o) ? labels : parts
+      for (const mat of Array.isArray(m.material) ? m.material : [m.material]) into.push(mat)
+    })
+    return { parts, labels }
+  }
+
+  it('never leaves a part depth-free, focused or not', () => {
+    const { scene, r } = build(chainDoc())
+    r.setLabelsVisible(true)
+
+    for (const focus of [null, ['a'], ['a', 'b'], null] as (string[] | null)[]) {
+      r.setFocus(focus)
+      const { parts, labels } = walk(scene, r)
+      expect(parts.length).toBeGreaterThan(0)
+      expect(labels.length).toBeGreaterThan(0)
+      expect(parts.filter((m) => m.depthTest === false)).toEqual([])
+      expect(labels.filter((m) => m.depthTest !== false)).toEqual([])
+    }
+  })
+})

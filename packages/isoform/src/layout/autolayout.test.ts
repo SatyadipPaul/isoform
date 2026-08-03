@@ -17,6 +17,107 @@ const e = (id: string, from: string, to: string): DocEdge => ({
   route: 'auto',
 })
 
+/**
+ * Every part whose own footprint overlaps a group's box while not belonging to
+ * it. This is the property the picture asserts: a boundary means "these parts,
+ * and only these".
+ */
+function intruders(d: Doc): string[] {
+  const placed = { ...d, groups: fitGroups(d) }
+  const bad: string[] = []
+  for (const g of placed.groups) {
+    const members = new Set(g.members ?? [])
+    const gx = [g.pos[0] - g.size[0] / 2, g.pos[0] + g.size[0] / 2]
+    const gz = [g.pos[1] - g.size[2] / 2, g.pos[1] + g.size[2] / 2]
+    for (const node of placed.nodes) {
+      if (members.has(node.id)) continue
+      const f = manifestFor(node.type).footprint
+      const nx = [node.pos[0] - f.w / 2, node.pos[0] + f.w / 2]
+      const nz = [node.pos[1] - f.d / 2, node.pos[1] + f.d / 2]
+      /* Any overlap at all — a part half inside a tier reads as belonging to it. */
+      if (nx[0] < gx[1] && gx[0] < nx[1] && nz[0] < gz[1] && gz[0] < nz[1]) {
+        bad.push(`${node.id} inside ${g.id}`)
+      }
+    }
+  }
+  return bad
+}
+
+/** Apply a layout result to a document, the way every caller does. */
+function place(d: Doc): Doc {
+  const { positions } = layout(d)
+  return {
+    ...d,
+    nodes: d.nodes.map((node) => ({ ...node, pos: positions.get(node.id) ?? node.pos })),
+  }
+}
+
+describe('group-aware layout', () => {
+  /**
+   * The failure this exists for, reduced from the real one.
+   *
+   * Crossing reduction cares about edges and nothing else, so a tier's members
+   * scatter down the depth axis and `fitGroups` draws a box around the scatter —
+   * enclosing parts that belong to no tier. Found by rebuilding five published
+   * architectures: Netflix's edge tier swallowed the client devices, and a URL
+   * shortener's write path swallowed the URL store.
+   */
+  it('does not draw a boundary around parts that are not in it', () => {
+    const d = doc(
+      [n('user', 'client'), n('lb', 'balancer'), n('api'), n('kgs'), n('keys', 'database'), n('kv', 'database'), n('cache', 'cache')],
+      [
+        e('1', 'user', 'lb'),
+        e('2', 'lb', 'api'),
+        e('3', 'api', 'kgs'),
+        e('4', 'kgs', 'keys'),
+        e('5', 'api', 'cache'),
+        e('6', 'api', 'kv'),
+        e('7', 'cache', 'kv'),
+      ],
+    )
+    d.groups = [
+      { id: 'write', label: 'Write path', pos: [0, 0], size: [4, 1.5, 4], cat: 'compute', members: ['kgs', 'keys'] },
+    ]
+    expect(intruders(place(d))).toEqual([])
+  })
+
+  it('keeps two tiers from overlapping each other', () => {
+    const d = doc(
+      [n('a'), n('b'), n('c'), n('d'), n('e'), n('f')],
+      [e('1', 'a', 'c'), e('2', 'b', 'd'), e('3', 'c', 'e'), e('4', 'd', 'f'), e('5', 'a', 'd')],
+    )
+    d.groups = [
+      { id: 'g1', label: 'One', pos: [0, 0], size: [4, 1.5, 4], cat: 'compute', members: ['a', 'c', 'e'] },
+      { id: 'g2', label: 'Two', pos: [0, 0], size: [4, 1.5, 4], cat: 'data', members: ['b', 'd', 'f'] },
+    ]
+    const placed = place(d)
+    expect(intruders(placed)).toEqual([])
+
+    /* And each tier occupies its own depth band rather than interleaving. */
+    const zOf = (id: string) => placed.nodes.find((x) => x.id === id)!.pos[1]
+    const g1 = ['a', 'c', 'e'].map(zOf)
+    const g2 = ['b', 'd', 'f'].map(zOf)
+    expect(Math.max(...g1)).toBeLessThan(Math.min(...g2))
+  })
+
+  it('leaves an ungrouped document exactly as it was', () => {
+    /* Banding must not perturb the crossing-reduced order when there is nothing
+       to band — that order is the whole value of the layout. */
+    const d = doc(
+      [n('a'), n('b'), n('c'), n('d')],
+      [e('1', 'a', 'b'), e('2', 'a', 'c'), e('3', 'b', 'd'), e('4', 'c', 'd')],
+    )
+    const before = layout(d).positions
+    const after = layout(d).positions
+    for (const [id, p] of before) expect(after.get(id)).toEqual(p)
+  })
+
+  it('handles the shipped example, which has two tiers', () => {
+    const { doc: parsed } = parseDsl(DSL_EXAMPLE)
+    expect(intruders(place(parsed))).toEqual([])
+  })
+})
+
 describe('layout', () => {
   it('ranks a chain left to right', () => {
     const d = doc([n('a'), n('b'), n('c')], [e('1', 'a', 'b'), e('2', 'b', 'c')])

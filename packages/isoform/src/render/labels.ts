@@ -46,6 +46,45 @@ const PAD_Y = 0.11
 const PLATE_D = 0.05
 const LIFT = 0.42
 
+/**
+ * Tags draw over the model rather than inside it.
+ *
+ * A tag is an annotation, not a prop: it names a part, and a name that the part
+ * in front of it eats is worse than no name at all. Measured across the five
+ * reference architectures, eleven plates were more than 5% swallowed by geometry
+ * and trace arrows, one of them 80% — a label sliced in half by a connector
+ * reads as a rendering fault, not as depth.
+ *
+ * Lifting the layer means a tag can cover geometry it sits behind. That is the
+ * trade, and it is the right way round: the tag is small, carries its leader
+ * stem, and is the thing the reader is trying to read.
+ */
+const LABEL_ORDER = 900
+
+/**
+ * Depth-free twin of a shared material.
+ *
+ * The palette's cache hands the same material to a plate and to any part of the
+ * same category — three of them, measured — so setting `depthTest = false` on
+ * what it returns turns depth testing off on the parts too, and they render
+ * inside out. Cloning once per base material keeps the plates sharing and
+ * leaves the original untouched.
+ */
+const onTopCache = new Map<THREE.Material, THREE.Material>()
+function onTop<T extends THREE.Material>(base: T): T {
+  let lifted = onTopCache.get(base)
+  if (!lifted) {
+    lifted = base.clone()
+    lifted.depthTest = false
+    /* Renamed, because the appearance cache keys derived materials on the source
+       name. Sharing a name with the depth-tested original would let a dimmed
+       *part* be served this twin out of that cache and render inside out. */
+    lifted.name = `${base.name}|ontop`
+    onTopCache.set(base, lifted)
+  }
+  return lifted as T
+}
+
 export interface Nameplate {
   /** Plate and text. Positioned and turned by `orientNameplate`. */
   group: THREE.Group
@@ -143,20 +182,25 @@ export function makeNameplate(title: string, sub: string | undefined, cat: Categ
 
   /* Upright plate: width on X, height on Y, thickness on Z — so the face the
      text sits on is the one billboarding turns toward the viewer. */
-  const plate = mesh(roundedBox(uw, uh, PLATE_D, 0.05), P.anodised('trim'), [0, 0, 0])
+  const plate = mesh(roundedBox(uw, uh, PLATE_D, 0.05), onTop(P.anodised('trim')), [0, 0, 0])
   plate.castShadow = true
   plate.receiveShadow = true
+  plate.renderOrder = LABEL_ORDER
   g.add(plate)
 
   /* Text just proud of the front face, unlit so it stays legible wherever the
-     key light happens to fall. PlaneGeometry already faces +Z. */
-  const face = mesh(plane(uw, uh), textMaterial(tex), [0, 0, PLATE_D / 2 + 0.002])
-  face.renderOrder = 1
+     key light happens to fall. PlaneGeometry already faces +Z.
+     Ordered after the plate: with depth testing off, what paints last wins, so
+     the two would otherwise race and the backing would sometimes cover its own
+     text. */
+  const face = mesh(plane(uw, uh), onTop(textMaterial(tex)), [0, 0, PLATE_D / 2 + 0.002])
+  face.renderOrder = LABEL_ORDER + 1
   g.add(face)
 
   /* Thin enough to stay out of the way, thick enough to read once the
      declutter pass slides a tag off its part and it becomes a leader. */
-  const stem = mesh(cylinder(0.017, 0.017, 1, 8), P.steel(0x8f98a8))
+  const stem = mesh(cylinder(0.017, 0.017, 1, 8), onTop(P.steel(0x8f98a8)))
+  stem.renderOrder = LABEL_ORDER
 
   return { group: g, stem, width: uw, height: uh }
 }
@@ -248,6 +292,9 @@ function layStem(n: Nameplate, top: THREE.Vector3): void {
   n.stem.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize())
 }
 
+/** Clear space between two plates, as a fraction of the frame width. */
+const LABEL_GAP_NDC = 0.012
+
 /**
  * Slide overlapping tags apart.
  *
@@ -255,10 +302,22 @@ function layStem(n: Nameplate, top: THREE.Vector3): void {
  * together stack their labels — the one thing that makes a labelled diagram less
  * readable than an unlabelled one.
  *
- * Resolution is along the camera's right vector only, and the stem follows, so a
- * displaced tag reads as a callout rather than as a label over the wrong object.
- * Two relaxation passes settle the common cases, and tags are ordered by
- * position so the result does not depend on document order.
+ * ## Resolved where the collision happens: on screen
+ *
+ * This used to compare *world* positions — two tags conflicted only if they were
+ * close in world depth and within half a plate of each other in world height.
+ * Neither is where a reader sees the overlap. A boundary's tag rides at the
+ * height of its tier and a part's tag rides above the part, so the two are
+ * metres apart in world Y, pass the height test, and are then drawn one on top
+ * of the other. Measured across five real architectures, twelve pairs collided
+ * with up to a third of a plate hidden behind another.
+ *
+ * Projecting first costs one matrix multiply per tag and tests the thing that
+ * actually matters. Resolution stays along the camera's right vector so a
+ * displaced tag reads as a callout — its stem follows and becomes a leader —
+ * and the push is converted back through each tag's own screen scale, because
+ * a tag at the back of the diagram needs more world movement per pixel than one
+ * at the front.
  */
 export function declutter(
   plates: Array<{ plate: Nameplate; top: THREE.Vector3 }>,
@@ -270,36 +329,107 @@ export function declutter(
   right.y = 0
   if (right.lengthSq() < 1e-9) return
   right.normalize()
-  const into = new THREE.Vector3(-right.z, 0, right.x)
 
-  const items = plates.map((p) => ({
-    ...p,
-    u: p.plate.group.position.dot(right),
-    v: p.plate.group.position.dot(into),
-    y: p.plate.group.position.y,
-  }))
-  items.sort((a, b) => a.u - b.u || a.v - b.v)
+  /* One scratch vector per probe, and each reading taken before the next probe
+     runs. Sharing a single scratch across the four projections here silently
+     aliases them — `edge` and `top` become the same object, the half-width is
+     read off the vertical probe, and it comes out at ~zero. Declutter then finds
+     no overlaps anywhere and quietly does nothing, which measures exactly like a
+     diagram whose labels were never decluttered at all. */
+  const at = new THREE.Vector3()
+  const project = (c: THREE.Vector3, dx: number, dy: number): THREE.Vector3 =>
+    at.set(c.x, c.y + dy, c.z).addScaledVector(right, dx).project(camera)
 
-  for (let pass = 0; pass < 2; pass++) {
-    for (let i = 1; i < items.length; i++) {
-      const a = items[i - 1]
-      const b = items[i]
-      /* Only a conflict if they also share depth and height — tags well apart
-         along the view direction, or at different tiers, can share a column. */
-      const sharesDepth = Math.abs(a.v - b.v) < 1.6
-      const sharesHeight = Math.abs(a.y - b.y) < (a.plate.height + b.plate.height) / 2 + 0.05
-      if (!sharesDepth || !sharesHeight) continue
-      const minU = (a.plate.width + b.plate.width) / 2 + 0.1
-      const gap = b.u - a.u
-      if (gap >= minU) continue
-      const push = (minU - gap) / 2
-      a.u -= push
-      b.u += push
+  const items = plates.map((p) => {
+    const c = p.plate.group.position
+    const centre = project(c, 0, 0)
+    const x = centre.x
+    const y = centre.y
+    /* Screen scale of this tag, measured rather than derived: one world unit
+       along `right` is this many NDC units at this tag's depth. */
+    const perUnit = project(c, 1, 0).x - x
+    /* Half-extents on screen, from the plate's own size. */
+    const hw = Math.abs(project(c, p.plate.width / 2, 0).x - x)
+    const hh = Math.abs(project(c, 0, p.plate.height / 2).y - y)
+    return { ...p, x, y, hw, hh, perUnit }
+  })
+  /* Tags only fight if they share a band of screen height, so solve each band on
+     its own and leave the rest alone. Bands are grown by overlap rather than by
+     rounding to fixed rows, because a row height that suits one diagram splits
+     tags that visibly collide in another. */
+  const byTop = [...items].sort((a, b) => a.y - a.hh - (b.y - b.hh))
+  const bands: (typeof items)[] = []
+  let end = -Infinity
+  for (const it of byTop) {
+    if (it.y - it.hh >= end) bands.push([])
+    bands[bands.length - 1].push(it)
+    end = Math.max(end, it.y + it.hh)
+  }
+
+  for (const band of bands) separate(band)
+
+  /**
+   * Slide a band's tags apart with the least total movement.
+   *
+   * Keeping the tags in their left-to-right order turns this from a pairwise
+   * problem into a chain: separate each neighbouring pair and every pair is
+   * separated, because the gaps accumulate. Subtracting the required gaps then
+   * leaves "put these in non-decreasing order, moving as little as possible" —
+   * isotonic regression, which pool-adjacent-violators solves exactly in one
+   * pass.
+   *
+   * The tempting alternative is to push overlapping pairs apart and repeat until
+   * it settles. It does not reliably settle: six tags inside two world units
+   * were still overlapping after six passes, because each fix disturbs a
+   * neighbour. This arrives at the answer instead of approaching it, and it
+   * cannot reorder tags — a tag that overtakes its neighbour swaps two labels on
+   * screen, which is worse than the overlap it was fixing.
+   */
+  function separate(band: typeof items): void {
+    if (band.length < 2) return
+    band.sort((a, b) => a.x - b.x)
+
+    /* Required left edge-to-edge spacing between each neighbouring pair. */
+    let run = 0
+    const shifted = band.map((it, i) => {
+      if (i > 0) run += band[i - 1].hw + it.hw + LABEL_GAP_NDC
+      return it.x - run
+    })
+
+    /* Pool adjacent violators: merge any block whose mean falls below the block
+       to its left, since the two cannot both keep their means in order. */
+    const sum: number[] = []
+    const n: number[] = []
+    for (const v of shifted) {
+      sum.push(v)
+      n.push(1)
+      while (sum.length > 1 && sum[sum.length - 1] / n[n.length - 1] <= sum[sum.length - 2] / n[n.length - 2]) {
+        const s = sum.pop() as number
+        const c = n.pop() as number
+        sum[sum.length - 1] += s
+        n[n.length - 1] += c
+      }
+    }
+
+    let k = 0
+    run = 0
+    for (let b = 0; b < sum.length; b++) {
+      const mean = sum[b] / n[b]
+      for (let c = 0; c < n[b]; c++, k++) {
+        if (k > 0) run += band[k - 1].hw + band[k].hw + LABEL_GAP_NDC
+        band[k].x = mean + run
+      }
     }
   }
 
   for (const it of items) {
-    it.plate.group.position.addScaledVector(right, it.u - it.plate.group.position.dot(right))
+    /* Back to world along `right`, through this tag's own scale. A degenerate
+       scale means the tag is edge-on to the camera and cannot be resolved by
+       sliding sideways; leaving it is better than dividing by ~zero and
+       flinging it out of the frame. */
+    if (Math.abs(it.perUnit) < 1e-6) continue
+    const nowX = project(it.plate.group.position, 0, 0).x
+    it.plate.group.position.addScaledVector(right, (it.x - nowX) / it.perUnit)
     layStem(it.plate, it.top)
   }
 }
