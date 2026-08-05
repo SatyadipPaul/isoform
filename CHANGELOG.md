@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.7.0 — Surfaces for a reader who cannot orbit
+
+Everything shipped so far assumed someone looking at a screen and moving the
+camera. This release is for the cases where nobody can: a pull request, a
+printed page, CI, an agent with no eyes.
+
+### `critique` — the ruler, promoted
+
+The measurement harness that drove the 0.6.0 label work was a script in the demo
+package. It is now a library call, and it no longer builds its own scene:
+`stageDocument` assembles the scene once and both `renderDocument` and `critique`
+use it. They had already drifted — the harness fitted the camera at a fixed
+margin of 1.08 while the renderer used `1.06 + padding / 20`, which agree at the
+default padding and nowhere else. A ruler that quietly measures a different
+picture than the one shipped is worse than no ruler.
+
+```ts
+const c = critique(doc, { aspect: 16 / 9, labels: true })
+c.labelCollisions   // 0
+c.occludedIds       // ['tv', 'phone']
+c.notes             // the same findings, in words
+```
+
+`clipped` is new: nameplates crossing the frame edge, which is a name the reader
+cannot finish.
+
+### `toDsl` — the format writes as well as reads
+
+Lossy, and it says so where it matters. Anything the grammar has no room for —
+a sublabel, a tier height, a manual route — is written into the output as a
+comment beside its declaration, so a fact is never silently dropped. `dslGaps`
+returns the same list separately. Positions are the one deliberate exception:
+every node has one, none is expressible, and `layout` derives them.
+
+The node line now carries **state** (`pg database "Postgres" down`), so a
+marked-up document survives the round trip. Trailing tokens are read as a group
+rather than one at a time, which also means a line with two of them reports the
+one token it did not understand instead of failing to parse entirely.
+
+### `renderSheet` · `renderStory` · `renderDiff`
+
+Several renders composed into one image, sharing one canvas and therefore one
+WebGL context — four separate `renderDocument` calls burn four, and browsers
+kill the oldest once about sixteen are live, silently returning blank.
+
+`renderDiff` emphasises only what changed *semantically*. Movement is reported
+in the caption and deliberately not lit: adding one node re-runs the layout and
+shifted six of nine nodes in the first version, and highlighting almost
+everything highlights nothing. `diffDocs` is the same comparison as pure data.
+
+### Depth cueing and a finite stage plate
+
+Both off by default; both change the composition, and silently restyling every
+existing render is not a minor-version thing to do.
+
+The cue is fitted to the diagram's **actual depth along the view axis**, taken
+from the corners of its bounds. The obvious shorthand — bounding-sphere radius —
+is only right for a diagram as deep as it is wide, and system diagrams are wide
+and shallow. Fitted that way, the arithmetic reported the far parts as 87% hazed
+while the render showed no difference at any strength, because the parts it
+called far were not far, only off to one side.
+
+The plate took three attempts, each corrected by looking at it. `steel` is fully
+metallic and a metal has no diffuse colour, so a dark grey came back as a sheet
+of warm brown reflected off the studio rig. A matte finish barely helped: with a
+dark base the broad specular dominates, and the rig's specular is warm. Metalness
+zero, roughness one, and the environment turned down leaves it reading as a dark
+plate.
+
+### Fixed: every explicit camera pose looked at the world origin
+
+`resolvePose` fills an absent target with `[0, 0, 0]`, so `renderDocument`'s test
+for "did the caller name a target" answered yes every time. Any pose that was not
+a preset framed the diagram against the origin rather than its own centre, and
+`layout` starts at a corner — so the content sat shoved off one edge with empty
+space on the other. Found by rendering a rotated view and looking at it; it would
+have broken every tile `renderSheet` produces.
+
+### Also
+
+`VERSION` said `0.5.0` throughout the whole of 0.6.0. A test now keeps it in step
+with package.json.
+
 ## 0.6.0 — Labels you can actually read
 
 Every diagram in this release is measured against the same five reference

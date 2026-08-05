@@ -1,6 +1,9 @@
 /** isoform — machined 3D system diagrams. */
 
-export const VERSION = '0.5.0'
+/* Kept in step with package.json by a test, because nothing else notices: this
+   sat at 0.5.0 through the whole of the 0.6.0 release without a single check
+   failing, and it is the string a consumer reads when reporting a bug. */
+export const VERSION = '0.7.0'
 
 export * from './foundry/rng.js'
 export * from './foundry/textures.js'
@@ -22,6 +25,7 @@ export * from './route/styles.js'
 
 export * from './layout/autolayout.js'
 export * from './io/dsl.js'
+export * from './io/emit.js'
 export * from './io/png.js'
 
 export * from './render/camera.js'
@@ -35,6 +39,8 @@ export * from './export/gif.js'
 export * from './export/html.js'
 export * from './render/labels.js'
 export * from './render/snapshot.js'
+export * from './render/critique.js'
+export * from './render/sheet.js'
 
 /* The mountable editor. `createEditor(container)` is the whole of it — see
    editor/chrome.ts for why the DOM and styles ship with the code rather than

@@ -74,6 +74,22 @@ export interface SnapshotOptions {
    */
   transparent?: boolean
   /**
+   * Fade distant geometry toward the backdrop. 0 is off, 1 fades hard.
+   *
+   * Makes overlapping parts readable as near and far rather than as an ambiguous
+   * pile. Ignored when `transparent`, where there is no backdrop to fade toward
+   * and the haze would composite as mud over whatever the image is dropped onto.
+   */
+  depthCue?: number
+  /**
+   * Draw a finite plate under the diagram.
+   *
+   * Gives the composition a base and an edge. The default studio ground is
+   * infinite and invisible, which leaves a diagram floating in a void — fine for
+   * a screenshot dropped into a dark page, weaker as a standalone image.
+   */
+  plate?: boolean
+  /**
    * Reuse an existing canvas instead of creating one.
    *
    * Rendering many documents in a row otherwise burns a WebGL context apiece,
@@ -83,15 +99,31 @@ export interface SnapshotOptions {
   canvas?: HTMLCanvasElement
 }
 
+/** A document built into a scene, framed, and ready to be rendered or measured. */
+export interface StagedDocument {
+  stage: Stage
+  reconciler: Reconciler
+  camera: THREE.Camera
+  /** The padded content bounds the camera was fitted to. */
+  bounds: THREE.Box3
+  /** Release the WebGL context. Always call it; a leaked context is permanent. */
+  dispose(): void
+}
+
 /**
- * Render `doc` and return a PNG data URL.
+ * Build and frame the scene a snapshot would render, and hand it back unrendered.
  *
- * The document is not modified. Nodes are drawn where they sit, so a document
- * straight out of `parseDsl` — every node at the origin — wants `layout` run
- * over it first.
+ * Exists so that anything wanting to *measure* the picture — `critique` — works
+ * against the same scene, camera and framing margin that `renderDocument` draws,
+ * rather than assembling its own and hoping the two stay in step. They did not:
+ * the critique harness fitted at a fixed margin of 1.08 while the renderer used
+ * `1.06 + padding / 20`, which agree at the default padding and nowhere else. A
+ * ruler that silently measures a different picture than the one shipped is worse
+ * than no ruler, and this project has already been fooled by one.
+ *
+ * The caller owns the returned stage and must `dispose()` it.
  */
-export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
-  const width = opts.width ?? 1920
+export function stageDocument(doc: Doc, opts: SnapshotOptions = {}): StagedDocument {
   const aspect = opts.aspect ?? 16 / 9
   const preset = opts.preset ?? 'hero'
   const padding = opts.padding ?? 0.6
@@ -140,7 +172,14 @@ export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
       const p = resolvePose(opts.pose)
       const f = fitPerspective(p.az, p.el)
       const persp = new THREE.PerspectiveCamera(HERO_FOV, aspect, 0.1, 500)
-      const target = p.target ? new THREE.Vector3(...p.target) : f.target
+      /* Asked of the *caller's* pose, not the resolved one: `resolvePose` fills
+         an absent target with the world origin, so testing the resolved value
+         answers "yes" every time. Every explicit pose therefore looked at [0,0,0]
+         rather than at the diagram, and any system not laid out around the origin
+         — which is most of them, since `layout` starts at one corner — was framed
+         with the content shoved off one edge and empty space on the other. */
+      const named = opts.pose.target !== undefined
+      const target = named ? new THREE.Vector3(...p.target) : f.target
       const dir = new THREE.Vector3(
         Math.cos(p.el) * Math.sin(p.az),
         Math.sin(p.el),
@@ -172,19 +211,45 @@ export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
     camera.updateMatrixWorld(true)
 
     stage.fitShadow(bounds)
+    if (opts.plate) stage.fitPlate(bounds)
+    /* Fitted last: the cue is measured from the eye, so it needs the camera in
+       its final position. Suppressed for a transparent export, where fading
+       toward a backdrop colour that will not be in the file leaves the far parts
+       tinted with it. */
+    stage.fitDepthCue(bounds, camera, opts.transparent ? 0 : (opts.depthCue ?? 0))
     /* Nameplates billboard toward the camera, and the camera only exists now. */
     reconciler.orientLabels(camera)
 
-    return renderPng(stage.renderer, stage.scene, camera, {
+    return { stage, reconciler, camera, bounds, dispose: () => stage.dispose() }
+  } catch (err) {
+    /* A WebGL context is a scarce, non-collectable resource, and one abandoned
+       here is never reclaimed. Browsers cap how many may be live — around
+       sixteen — after which the oldest is silently killed and its output comes
+       back blank, so a build that throws halfway must not keep its context. */
+    stage.dispose()
+    throw err
+  }
+}
+
+/**
+ * Render `doc` and return a PNG data URL.
+ *
+ * The document is not modified. Nodes are drawn where they sit, so a document
+ * straight out of `parseDsl` — every node at the origin — wants `layout` run
+ * over it first.
+ */
+export function renderDocument(doc: Doc, opts: SnapshotOptions = {}): string {
+  const width = opts.width ?? 1920
+  const aspect = opts.aspect ?? 16 / 9
+  const staged = stageDocument(doc, opts)
+  try {
+    return renderPng(staged.stage.renderer, staged.stage.scene, staged.camera, {
       width,
       aspect,
       transparent: opts.transparent,
-      hide: [reconciler.anchorLayer],
+      hide: [staged.reconciler.anchorLayer],
     })
   } finally {
-    /* A WebGL context is a scarce, non-collectable resource. Released even when
-       the render throws — the alternative is a service that works for its first
-       dozen requests and then returns blank images with no error. */
-    stage.dispose()
+    staged.dispose()
   }
 }

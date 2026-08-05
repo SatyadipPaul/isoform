@@ -77,7 +77,19 @@ createEditor(el, { doc })
 ```
 
 **Connector kinds:** `->` sync, `~>` async, `=>` flow, `+>` secure, `<->`
-duplex. A trailing `#` starts a comment; a trailing `#rrggbb` is a tint.
+duplex. A trailing `#` starts a comment; a trailing `#rrggbb` is a tint, and a
+trailing state name is a state — either order, both optional:
+
+```
+pg     database "Postgres"  down
+cache  cache    "Redis"     #b45309  degraded
+```
+
+Text is also an **output**. `toDsl(doc)` writes the document back out, and
+`dslGaps(doc)` lists what the format cannot carry — positions are derived by
+`layout`, so they are never written, and anything else that would be lost is
+emitted as a comment beside the declaration it belongs to rather than dropped
+silently.
 
 ### Build a document in code
 
@@ -428,6 +440,11 @@ would be marketing rather than information design.
 | `exportGif(doc, opts?)` | Animated GIF of a camera move |
 | `renderFrames(doc, opts)` | Raw RGBA frames, for your own encoder |
 | `turntable(opts?)` | A slow orbit, as a storyboard |
+| `toDsl(doc)` / `dslGaps(doc)` | Document back to text, and what text cannot carry |
+| `critique(doc, opts?)` | Measured findings about the picture it would render |
+| `renderSheet(doc, opts?)` | One diagram from several angles, as one image |
+| `renderStory(doc, opts)` | A camera move as a strip of stills |
+| `renderDiff(a, b, opts?)` / `diffDocs(a, b)` | What changed, drawn and as data |
 
 `renderDocument` options beyond width and camera:
 
@@ -437,6 +454,44 @@ would be marketing rather than information design.
 | `trace` | Id of a trace to draw, paused partway through |
 | `traceAt` | How far through that trace, `0`–`1`. Defaults to the midpoint |
 | `transparent` | Drop the studio backdrop, for a light-themed page |
+| `depthCue` | Fade distant parts toward the backdrop, `0`–`1`. Off by default |
+| `plate` | Draw a finite plate under the diagram. Off by default |
+
+### Ask the renderer what is wrong with the picture
+
+`critique` measures the image `renderDocument` would produce — through the same
+scene and the same camera, so a number moving means the picture moved. Pass the
+options you intend to export with, or the answer is about a different picture.
+
+```ts
+const c = critique(doc, { aspect: 16 / 9, padding: 0.4, labels: true })
+
+c.labelCollisions   // nameplate pairs that overlap on screen
+c.clipped           // nameplates crossing the frame edge
+c.occludedIds       // parts hidden behind other geometry, by id
+c.frameUse          // share of the frame the diagram spans
+c.notes             // the same findings in words, worst first
+```
+
+Written for a caller that cannot look at the result — an agent, or CI. Asserting
+`critique(doc).labelCollisions === 0` in a test catches a diagram going
+unreadable in a way no snapshot hash will.
+
+### Three ways to show more than one moment
+
+```ts
+await renderSheet(doc)                                  // four azimuths, captioned
+await renderStory(doc, { ...turntable(), frames: 6 })   // a camera move, as stills
+await renderDiff(before, after)                         // side by side, changes lit
+```
+
+Each returns a PNG data URL. `renderDiff` emphasises only what changed
+*semantically* — added, removed, re-labelled, re-stated. Movement is reported in
+the caption but deliberately not lit: inserting one node re-runs the layout and
+shifts most of the rest, and highlighting all of them highlights nothing.
+
+`diffDocs(a, b)` is the same comparison without the render, and is pure — useful
+in a commit hook.
 
 ## Keyboard
 

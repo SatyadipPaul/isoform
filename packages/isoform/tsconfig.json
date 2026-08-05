@@ -2,6 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "include": ["src", "dev"],
   "compilerOptions": {
-    "types": ["vite/client"]
+    /* `node` is here for the tests, which live alongside the source and are
+       typechecked by this same config — one of them reads package.json to keep
+       the exported VERSION honest. The library itself imports nothing from node
+       and must not start: it runs in a browser, and the build would not care. */
+    "types": ["vite/client", "node"]
   }
 }

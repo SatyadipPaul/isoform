@@ -1,16 +1,18 @@
 /**
- * Text format.
+ * Text format — reading.
  *
- * Import only, deliberately. Round-tripping a document back out to text means
- * preserving comments, declaration order and every manual override the user made
- * by hand in the viewport — a project in its own right, and one that silently
- * loses work when it gets it wrong. Reading is the half that makes authoring
- * fast, so it is the half that ships first.
+ * Writing lives in `emit.ts` and arrived much later, on purpose. Round-tripping
+ * a *hand-authored* file means preserving comments, declaration order and every
+ * manual override made by hand in the viewport, and a writer that quietly loses
+ * those is worse than no writer at all. `toDsl` does not attempt it: it states
+ * plainly which facts the format cannot carry, in the output itself. Reading is
+ * the half that makes authoring fast, so it is the half that shipped first.
  *
  *     # comment
  *     web      client   "Browser"
  *     api      gateway  "API"        edge     # trailing comment
- *     orders   service  "Orders"
+ *     orders   service  "Orders"     degraded # what it is doing
+ *     cache    cache    "Redis"      #b45309  # a hue of its own
  *     pg       database "Postgres"
  *
  *     web -> api
@@ -36,6 +38,7 @@
  */
 
 import {
+  NODE_STATES,
   emptyDoc,
   type Doc,
   type DocEdge,
@@ -43,6 +46,7 @@ import {
   type DocNode,
   type DocTrace,
   type EdgeKind,
+  type NodeState,
 } from '../doc/schema.js'
 import { CATEGORIES } from '../foundry/materials.js'
 import { PART_IDS } from '../parts/manifests.js'
@@ -72,6 +76,7 @@ export interface DslResult {
    — the parser just starts calling a valid token unknown. */
 const PARTS = new Set<string>(PART_IDS)
 const CATS = new Set<string>(CATEGORIES)
+const STATES = new Set<string>(NODE_STATES)
 
 /**
  * Parse `text` into a document.
@@ -217,13 +222,17 @@ export function parseDsl(text: string): DslResult {
       continue
     }
 
-    /* id type "Label" [tint] */
-    const nm = /^(\S+)\s+(\S+)(?:\s+"([^"]*)")?(?:\s+(\S+))?\s*$/.exec(raw)
+    /* id type "Label" [tint] [state] — trailing tokens in any order.
+       Taken as a group rather than as one optional token, because a node can
+       reasonably be both recoloured and marked down, and because a line carrying
+       two trailing tokens used to fail the match outright and be reported as
+       unparseable rather than as the one token that was not understood. */
+    const nm = /^(\S+)\s+(\S+)(?:\s+"([^"]*)")?((?:\s+\S+)*)\s*$/.exec(raw)
     if (!nm) {
       issues.push({ line: lineNo, message: `could not parse "${raw}"` })
       continue
     }
-    const [, id, type, label, extra] = nm
+    const [, id, type, label, rest] = nm
     if (!PARTS.has(type)) {
       issues.push({ line: lineNo, message: `unknown part type "${type}"` })
       continue
@@ -234,9 +243,10 @@ export function parseDsl(text: string): DslResult {
     }
     const node: DocNode = { id, type: type as PartId, pos: [0, 0], rot: 0 }
     if (label) node.label = label
-    if (extra) {
-      if (/^#[0-9a-f]{6}$/i.test(extra)) node.tint = extra
-      else if (!CATS.has(extra)) issues.push({ line: lineNo, message: `ignored token "${extra}"` })
+    for (const tok of rest.split(/\s+/).filter(Boolean)) {
+      if (/^#[0-9a-f]{6}$/i.test(tok)) node.tint = tok
+      else if (STATES.has(tok)) node.state = tok as NodeState
+      else if (!CATS.has(tok)) issues.push({ line: lineNo, message: `ignored token "${tok}"` })
     }
     nodes.set(id, node)
   }

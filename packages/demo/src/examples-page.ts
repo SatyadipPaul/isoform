@@ -7,6 +7,7 @@
  */
 
 import {
+  critique,
   fitGroups,
   layout,
   parseDsl,
@@ -17,7 +18,6 @@ import {
 } from '@satyadip28/isoform'
 import * as THREE from 'three'
 import { EXAMPLES, type Example } from './examples.js'
-import { measure } from './critique.js'
 
 const SINK = 'http://localhost:5199/'
 const out = () => document.getElementById('out')!
@@ -83,15 +83,19 @@ async function render(ex: Example, save: boolean): Promise<void> {
   img.alt = ex.title
   card.append(img)
 
-  const m = measure(doc, 2)
+  /* The same options the tile above was rendered with, so the numbers describe
+     that picture and not a differently framed one. */
+  const m = critique(doc, { aspect: 2, padding: 0.4, labels: true })
   log(
     `${ex.id.padEnd(10)} ${String(doc.nodes.length).padStart(2)}p ${String(doc.edges.length).padStart(2)}e · ` +
       `label collisions ${String(m.labelCollisions).padStart(2)} (worst ${(m.worstOverlap * 100).toFixed(0)}%) · ` +
+      `clipped ${m.clipped} · ` +
       `frame ${(m.frameUse * 100).toFixed(0)}% · weight ×${m.weightRange.toFixed(1)} · ` +
       `occluded ${m.occluded}` +
       (issues.length ? ` · ${issues.length} DSL ISSUES` : '') +
       (gaps.length ? ` · ${gaps.length} TRACE GAPS` : ''),
   )
+  for (const note of m.notes) log(`           ↳ ${note}`)
 
   if (save) {
     const a = document.createElement('a')
