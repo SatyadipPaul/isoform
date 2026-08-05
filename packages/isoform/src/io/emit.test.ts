@@ -18,11 +18,17 @@ function semantics(doc: Doc) {
       id: n.id,
       type: n.type,
       label: n.label,
+      sublabel: n.sublabel,
       tint: n.tint,
       state: n.state,
     })),
     /* Ids are assigned by the parser and will differ; the wiring must not. */
-    edges: doc.edges.map((e) => ({ from: e.from.node, to: e.to.node, kind: e.kind })),
+    edges: doc.edges.map((e) => ({
+      from: e.from.node,
+      to: e.to.node,
+      kind: e.kind,
+      label: e.label,
+    })),
     groups: doc.groups.map((g) => ({ id: g.id, label: g.label, members: g.members })),
     traces: doc.traces.map((t) => ({ label: t.label, path: t.path, timings: t.timings })),
   }
@@ -40,14 +46,14 @@ function roundTrip(src: string) {
 
 const RICH = `
 web    client   "Browser"
-api    gateway  "API"
-orders service  "Orders"     degraded
-cache  cache    "Redis"      #b45309
-pg     database "Postgres"   down
+api    gateway  "API"       "edge tier"
+orders service  "Orders"    degraded
+cache  cache    "Redis"     #b45309
+pg     database "Postgres"  down
 
-web -> api
+web -> api "https"
 api ~> orders
-orders => pg
+orders => pg "write path"
 api <-> cache
 web +> api
 
@@ -113,10 +119,8 @@ describe('dslGaps', () => {
 
   it('names every fact the format drops rather than losing it quietly', () => {
     const doc = parseDsl(RICH).doc
-    doc.nodes[0].sublabel = 'chrome'
     doc.nodes[1].y = 1
     doc.nodes[2].scale = 1.5
-    doc.edges[0].label = 'https'
     doc.edges[1].route = 'manual'
     doc.edges[1].waypoints = [
       [1, 1],
@@ -126,10 +130,8 @@ describe('dslGaps', () => {
 
     const gaps = dslGaps(doc)
     expect(gaps).toEqual([
-      'node web: sublabel "chrome"',
       'node api: tier 1',
       'node orders: scale 1.5',
-      `edge ${doc.edges[0].id}: label "https"`,
       `edge ${doc.edges[1].id}: manual route, 2 waypoint(s)`,
       'group core: category data',
     ])
@@ -137,13 +139,64 @@ describe('dslGaps', () => {
 
   it('writes those same facts into the text as comments', () => {
     const doc = parseDsl(RICH).doc
-    doc.nodes[0].sublabel = 'chrome'
     doc.nodes[1].y = 2
+    doc.nodes[2].scale = 1.5
     const text = toDsl(doc)
-    expect(text).toContain('# sublabel "chrome"')
     expect(text).toContain('# tier 2')
+    expect(text).toContain('# scale 1.5')
     /* And the comments must not change what the text means. */
     expect(parseDsl(text).issues).toEqual([])
+  })
+})
+
+describe('the things the format learned to carry', () => {
+  it('round-trips a node sublabel, which the nameplate has always drawn', () => {
+    /* Renderable but unwritable was the worst combination: a document using a
+       sublabel could be drawn and could not be exported as text, so an agent
+       that reached for one left the text format for good. */
+    const { doc, issues } = parseDsl('api gateway "API" "edge tier"')
+    expect(issues).toEqual([])
+    expect(doc.nodes[0]).toMatchObject({ label: 'API', sublabel: 'edge tier' })
+    expect(parseDsl(toDsl(doc)).doc.nodes[0].sublabel).toBe('edge tier')
+  })
+
+  it('round-trips an edge label', () => {
+    const { doc, issues } = parseDsl('a service "A"\nb service "B"\na -> b "https"')
+    expect(issues).toEqual([])
+    expect(doc.edges[0].label).toBe('https')
+    expect(parseDsl(toDsl(doc)).doc.edges[0].label).toBe('https')
+  })
+
+  it('reads an edge label on every arrow spelling', () => {
+    const src = ['->', '~>', '=>', '+>', '<->']
+      .map((a, i) => `a${i} service "A"\nb${i} service "B"\na${i} ${a} b${i} "hop ${i}"`)
+      .join('\n')
+    const { doc, issues } = parseDsl(src)
+    expect(issues).toEqual([])
+    expect(doc.edges.map((e) => e.label)).toEqual(['hop 0', 'hop 1', 'hop 2', 'hop 3', 'hop 4'])
+  })
+
+  it('does not mistake a labelled edge for an endpoint with a space in it', () => {
+    const { doc, issues } = parseDsl('a service "A"\nb service "B"\na -> b "dynamic port mapping"')
+    expect(issues).toEqual([])
+    expect(doc.edges).toHaveLength(1)
+    expect(doc.edges[0].to.node).toBe('b')
+    expect(doc.edges[0].label).toBe('dynamic port mapping')
+  })
+
+  it('leaves an unlabelled edge unlabelled', () => {
+    const { doc } = parseDsl('a service "A"\nb service "B"\na -> b')
+    expect(doc.edges[0].label).toBeUndefined()
+    expect(toDsl(doc)).toContain('a -> b\n')
+  })
+
+  it('keeps a sublabel positional by writing the id when there is no label', () => {
+    /* The sublabel is the second quoted string, so it cannot be emitted without
+       a first one — the reader would take it as the label. */
+    const doc = emptyDoc()
+    doc.nodes.push({ id: 'n1', type: 'service', sublabel: 'only a sub', pos: [0, 0], rot: 0 })
+    const back = parseDsl(toDsl(doc)).doc
+    expect(back.nodes[0].sublabel).toBe('only a sub')
   })
 })
 

@@ -171,11 +171,24 @@ function labelTexture(
   return made
 }
 
-/** Build a tag for `title` (and optional `sub`), sized to its text. */
-export function makeNameplate(title: string, sub: string | undefined, cat: Category): Nameplate {
+/**
+ * Build a tag for `title` (and optional `sub`), sized to its text.
+ *
+ * `scale` shrinks the whole tag without touching the texture, which stays shared
+ * in the cache — the same words on a connector and on a part are one canvas.
+ * Connector tags are drawn smaller on purpose: a diagram has more of them than
+ * it has parts, and at equal weight they read as the subject rather than as
+ * annotation on it.
+ */
+export function makeNameplate(
+  title: string,
+  sub: string | undefined,
+  cat: Category,
+  scale = 1,
+): Nameplate {
   const { tex, w, h } = labelTexture(title, sub)
-  const uw = w / PX_PER_UNIT
-  const uh = h / PX_PER_UNIT
+  const uw = (w / PX_PER_UNIT) * scale
+  const uh = (h / PX_PER_UNIT) * scale
 
   const P = palette(cat)
   const g = new THREE.Group()

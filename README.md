@@ -85,6 +85,22 @@ pg     database "Postgres"  down
 cache  cache    "Redis"     #b45309  degraded
 ```
 
+**Name the connectors too.** A quoted string after the target labels the line,
+and the tag is drawn at the middle of the route it names:
+
+```
+user -> alb "Access via dynamic port"
+alb  -> app "Dynamic port mapping via target group"
+```
+
+Most architecture diagrams are mostly verbs — *creates*, *reads from*, *falls
+back to* — and a diagram that can only draw the nouns is drawing half the
+system. A second quoted string on a node line is its sublabel:
+
+```
+ecs  service "Amazon ECS" "cluster"
+```
+
 Text is also an **output**. `toDsl(doc)` writes the document back out, and
 `dslGaps(doc)` lists what the format cannot carry — positions are derived by
 `layout`, so they are never written, and anything else that would be lost is
@@ -363,9 +379,9 @@ history.subscribe((doc) => reconciler.sync(doc))
 The document model, layout, routing and serialisation are pure and run in Node
 with no DOM — useful for validating or generating diagrams server-side.
 
-## The catalog — 24 parts
+## The catalog — 25 parts
 
-![The 24 parts at palette size](docs/catalog.png)
+![The 25 parts at palette size](docs/catalog.png)
 
 | Group | Parts |
 |---|---|
@@ -442,6 +458,7 @@ would be marketing rather than information design.
 | `turntable(opts?)` | A slow orbit, as a storyboard |
 | `toDsl(doc)` / `dslGaps(doc)` | Document back to text, and what text cannot carry |
 | `critique(doc, opts?)` | Measured findings about the picture it would render |
+| `suggestPose(doc, opts?)` | The camera that shows this diagram best, and why |
 | `renderSheet(doc, opts?)` | One diagram from several angles, as one image |
 | `renderStory(doc, opts)` | A camera move as a strip of stills |
 | `renderDiff(a, b, opts?)` / `diffDocs(a, b)` | What changed, drawn and as data |
@@ -476,6 +493,26 @@ c.notes             // the same findings in words, worst first
 Written for a caller that cannot look at the result — an agent, or CI. Asserting
 `critique(doc).labelCollisions === 0` in a test catches a diagram going
 unreadable in a way no snapshot hash will.
+
+### Let it pick the camera
+
+The hero preset frames anything acceptably and nothing perfectly, because the
+right angle is a property of the diagram: a system laid out along one axis lands
+diagonally, fills half its frame, and hides its own clients behind other parts.
+
+```ts
+const { pose, critique } = suggestPose(doc)
+renderDocument(doc, { pose, width: 2000 })
+```
+
+Sweeps a ring of cameras, scores each with the same ruler `critique` uses, and
+returns the best — faults first (a hidden part, a clipped label), then framing,
+then a preference for staying near the house angle. It builds the scene once and
+re-aims, so 48 candidates cost about 400 ms rather than 48 full renders.
+
+It optimises what it can measure. It has no notion of a part having a *front*,
+so it will happily choose a camera behind the client monitor if the numbers come
+out level — which is why ties break toward the hero azimuth.
 
 ### Three ways to show more than one moment
 

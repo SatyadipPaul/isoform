@@ -19,7 +19,7 @@ import { blob, cache, database, search, vectordb, warehouse } from './data.js'
 import { queue, stream } from './msg.js'
 import { cdn, dns, firewall } from './netedge.js'
 import { auth, monitor, registry } from './ops.js'
-import { client, external, mobile } from './client.js'
+import { actor, client, external, mobile } from './client.js'
 import { boundary } from './boundary.js'
 import { MANIFESTS } from './manifests.js'
 import { PORT_IDS } from './types.js'
@@ -56,6 +56,7 @@ const BUILDERS: Record<PartId, PartBuilder> = {
   monitor,
   registry,
   client,
+  actor,
   mobile,
   external,
   boundary: () => boundary(),

@@ -12,7 +12,7 @@
  */
 
 import * as THREE from 'three'
-import type { Doc, DocGroup, DocNode } from '../doc/schema.js'
+import type { Doc, DocEdge, DocGroup, DocNode } from '../doc/schema.js'
 import { build, manifestFor, measure, portsOf } from '../parts/registry.js'
 import { boundary } from '../parts/boundary.js'
 import { instantiateMerged, mergeWorld, mergedFor } from './merge.js'
@@ -104,6 +104,45 @@ interface EdgeView {
    * reading back a buffer. The router already produced it; hold on to it.
    */
   points: THREE.Vector3[]
+  /** Tag naming what travels this connector, if the edge carries a label. */
+  label?: Nameplate
+  /** The text currently on that tag, so a relabel is noticed without a reroute. */
+  labelText?: string
+}
+
+/**
+ * How much smaller a connector's tag is than a part's.
+ *
+ * A diagram has more connectors than parts, so at equal weight the verbs shout
+ * over the nouns. Small enough to read as annotation, large enough to read.
+ */
+const EDGE_LABEL_SCALE = 0.78
+
+/**
+ * The point half way along a polyline, measured by length.
+ *
+ * Not the middle *vertex*: a route from an L or a Z has its corner vertices
+ * bunched together, so the middle one by index can sit almost on top of an
+ * endpoint. Half way by arc length lands where a reader would point.
+ */
+function midpointOf(points: THREE.Vector3[]): THREE.Vector3 {
+  if (points.length === 0) return new THREE.Vector3()
+  if (points.length === 1) return points[0].clone()
+
+  let total = 0
+  for (let i = 1; i < points.length; i++) total += points[i].distanceTo(points[i - 1])
+  if (total < 1e-6) return points[0].clone()
+
+  let walked = 0
+  for (let i = 1; i < points.length; i++) {
+    const seg = points[i].distanceTo(points[i - 1])
+    if (walked + seg >= total / 2) {
+      const t = seg < 1e-9 ? 0 : (total / 2 - walked) / seg
+      return points[i - 1].clone().lerp(points[i], t)
+    }
+    walked += seg
+  }
+  return points[points.length - 1].clone()
 }
 
 /** Cheap identity for a resolved route. Quantised so float noise is not a change. */
@@ -778,6 +817,30 @@ export class Reconciler {
   }
 
   /**
+   * Create, retext or drop a connector's tag to match the document.
+   *
+   * Kept out of the geometry path because the two change independently: a route
+   * reflows whenever a node moves, and the words on it almost never do.
+   */
+  private syncEdgeLabel(view: EdgeView, edge: DocEdge): void {
+    const want = edge.label?.trim() || undefined
+    if (view.labelText === want && (want === undefined) === (view.label === undefined)) return
+
+    if (view.label) {
+      disposeNameplate(view.label)
+      view.label = undefined
+    }
+    view.labelText = want
+    if (!want) return
+
+    /* The connector palette, not the endpoints': a tag on a line belongs to the
+       line. Only the plate is added — `orientLabels` lays the stem, and it is
+       added with it so a tag that declutter slides aside keeps its leader. */
+    view.label = makeNameplate(want, undefined, 'link', EDGE_LABEL_SCALE)
+    this.labelLayer.add(view.label.group, view.label.stem)
+  }
+
+  /**
    * Point every nameplate at the camera.
    *
    * Called from the render loop rather than on document change, because it
@@ -800,6 +863,16 @@ export class Reconciler {
       const top = new THREE.Vector3(g.pos[0], g.size[1], g.pos[1])
       orientNameplate(v.label, top, camera)
       plates.push({ plate: v.label, top })
+    }
+    /* Connector tags go through the same pass as everything else. They are the
+       tags most likely to land on something — a route runs *between* parts, so
+       its midpoint is exactly where the parts' own tags are heading — and a
+       separate pass would let the two collections resolve into each other. */
+    for (const v of this.edges.values()) {
+      if (!v.label) continue
+      const at = midpointOf(v.points)
+      orientNameplate(v.label, at, camera)
+      plates.push({ plate: v.label, top: at })
     }
     /* Optional because decluttering resolves overlaps along the camera's right
        vector, and that vector turns as the camera orbits — so the arrangement it
@@ -913,6 +986,11 @@ export class Reconciler {
         view.group,
         want ? appearanceMaterials(collectBaselines(view.group), 'link', { dim: true }) : null,
       )
+      /* The tag recedes with the line it names. Left bright, a dimmed connector
+         still shouts its verb — and text is the loudest thing in the frame, so
+         the emphasis would read as pointing at the very edges being played
+         down. */
+      if (view.label) setNameplateDimmed(view.label, want)
     }
 
     for (const v of this.nodes.values()) {
@@ -970,7 +1048,13 @@ export class Reconciler {
       seen.add(r.edge.id)
       const fp = fingerprint(r.edge.kind, r.points)
       const prev = this.edges.get(r.edge.id)
-      if (prev && prev.fingerprint === fp) continue
+      if (prev && prev.fingerprint === fp) {
+        /* The route is unchanged, but the words on it may not be. Renaming an
+           edge moves no geometry, so a label synced only on rebuild would keep
+           showing the old text until something unrelated forced a reroute. */
+        this.syncEdgeLabel(prev, r.edge)
+        continue
+      }
 
       if (prev) {
         prev.group.removeFromParent()
@@ -996,13 +1080,20 @@ export class Reconciler {
       proxy.renderOrder = 2
       this.edgePickLayer.add(proxy)
 
-      this.edges.set(r.edge.id, {
+      const view: EdgeView = {
         group: built.group,
         proxy,
         fingerprint: fp,
         update: built.update,
         points: r.points.map((p) => p.clone()),
-      })
+        /* Carried across a rebuild rather than recreated: the route changing is
+           not the label changing, and rebuilding the plate would drop its dim
+           state and re-upload a texture the cache already holds. */
+        label: prev?.label,
+        labelText: prev?.labelText,
+      }
+      this.edges.set(r.edge.id, view)
+      this.syncEdgeLabel(view, r.edge)
       /* A route that moves during a gesture stays out of the merge until the
          gesture ends — re-concatenating the whole diagram for it would cost far
          more than drawing it on its own. */
@@ -1017,6 +1108,10 @@ export class Reconciler {
       disposeTree(view.group)
       view.proxy.removeFromParent()
       view.proxy.geometry.dispose()
+      /* Unlike a rebuild, where the tag is carried across, a deleted edge takes
+         its tag with it — otherwise the words stay in the scene naming a
+         connector that no longer exists. */
+      if (view.label) disposeNameplate(view.label)
       this.edges.delete(id)
     }
 

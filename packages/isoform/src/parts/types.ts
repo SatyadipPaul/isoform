@@ -25,6 +25,7 @@ export type PartId =
   | 'monitor'
   | 'registry'
   | 'client'
+  | 'actor'
   | 'mobile'
   | 'external'
   | 'boundary'

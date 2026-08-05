@@ -197,7 +197,16 @@ export function parseDsl(text: string): DslResult {
       const [tok, kind] = arrow
       const [lhs, rhs] = raw.split(tok)
       const from = lhs.trim()
-      const to = rhs.trim()
+      /* web -> api "https"  —  the quoted tail names what travels the line.
+         Taken off the right-hand side before the node id is read, so a label
+         containing a space cannot be mistaken for a second endpoint. */
+      let to = rhs.trim()
+      let edgeLabel: string | undefined
+      const lm = /^(.*?)\s*"([^"]*)"\s*$/.exec(to)
+      if (lm) {
+        to = lm[1].trim()
+        edgeLabel = lm[2] || undefined
+      }
       if (!from || !to) {
         issues.push({ line: lineNo, message: `edge needs a node on both sides of "${tok}"` })
         continue
@@ -209,6 +218,7 @@ export function parseDsl(text: string): DslResult {
         kind,
         route: 'auto',
       }
+      if (edgeLabel) edge.label = edgeLabel
       pending.push(() => {
         /* Either end may name a group. A connector to a boundary wires a whole
            tier as one thing, instead of forcing the line to land on whichever
@@ -222,17 +232,20 @@ export function parseDsl(text: string): DslResult {
       continue
     }
 
-    /* id type "Label" [tint] [state] — trailing tokens in any order.
-       Taken as a group rather than as one optional token, because a node can
-       reasonably be both recoloured and marked down, and because a line carrying
-       two trailing tokens used to fail the match outright and be reported as
-       unparseable rather than as the one token that was not understood. */
-    const nm = /^(\S+)\s+(\S+)(?:\s+"([^"]*)")?((?:\s+\S+)*)\s*$/.exec(raw)
+    /* id type "Label" ["Sublabel"] [tint] [state] — trailing tokens in any order.
+       A second quoted string is the sublabel, which the nameplate has always
+       drawn and the format had no way to say — so a document using one could not
+       be written back out as text at all.
+       Trailing bare tokens are taken as a group rather than one at a time,
+       because a node can reasonably be both recoloured and marked down, and
+       because a line carrying two of them used to fail the match outright and be
+       reported as unparseable rather than as the one token not understood. */
+    const nm = /^(\S+)\s+(\S+)(?:\s+"([^"]*)")?(?:\s+"([^"]*)")?((?:\s+\S+)*)\s*$/.exec(raw)
     if (!nm) {
       issues.push({ line: lineNo, message: `could not parse "${raw}"` })
       continue
     }
-    const [, id, type, label, rest] = nm
+    const [, id, type, label, sublabel, rest] = nm
     if (!PARTS.has(type)) {
       issues.push({ line: lineNo, message: `unknown part type "${type}"` })
       continue
@@ -243,6 +256,7 @@ export function parseDsl(text: string): DslResult {
     }
     const node: DocNode = { id, type: type as PartId, pos: [0, 0], rot: 0 }
     if (label) node.label = label
+    if (sublabel) node.sublabel = sublabel
     for (const tok of rest.split(/\s+/).filter(Boolean)) {
       if (/^#[0-9a-f]{6}$/i.test(tok)) node.tint = tok
       else if (STATES.has(tok)) node.state = tok as NodeState

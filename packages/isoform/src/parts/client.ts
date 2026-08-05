@@ -17,6 +17,7 @@ import {
   plane,
   ringGeo,
   roundedBox,
+  sphere,
 } from '../foundry/geometry.js'
 import { textures } from '../foundry/textures.js'
 import type { PartBuild } from './types.js'
@@ -104,6 +105,59 @@ export function client(): PartBuild {
 
   g.add(occlusion(2.9, 0.45))
   return { group: g, dist: 3.7, target: V(0, 0.82, 0) }
+}
+
+/**
+ * A person.
+ *
+ * The catalog had twenty-five parts and every one of them was equipment, so a
+ * diagram with a human in it had to draw the human as a monitor. That is not a
+ * cosmetic shortfall: recreating a stock AWS diagram, "User" and "AWS Management
+ * Console" both became `client` and rendered as the same object, and the only
+ * way to tell them apart was to tint one of them. Actors appear in most
+ * architecture diagrams ever drawn.
+ *
+ * Deliberately a mannequin and not a cartoon — no face, no limbs. It has to sit
+ * beside machined equipment under a locked studio rig without becoming the
+ * subject of the picture, and at thumbnail size a head-and-shoulders silhouette
+ * on a disc reads as "someone" from any angle. Turned on the spot it is
+ * symmetrical, which matters because the camera orbits and a figure with a front
+ * would spend half the turntable facing away.
+ */
+export function actor(): PartBuild {
+  const g = new THREE.Group()
+  const P = palette('client')
+  const shell = P.polymer('body')
+  const steel = P.steel(0x9ba4b3)
+
+  /* Same weighted disc the monitor and handset stand on, so a person reads as
+     one of the things placed on this stage rather than as a sticker on it.
+     `pail` is (rTop, rBottom, height) — passing a height into the second slot
+     produces a wide flared skirt rather than a tall column, which is exactly
+     what the first attempt drew. */
+  g.add(mesh(pail(0.4, 0.34, 0.05, 56), P.powder(0x2b2f37), [0, 0, 0]))
+  g.add(mesh(roundedBox(0.4, 0.05, 0.4, 0.04), P.rubber(0x22252c), [0, 0.02, 0]))
+
+  /* Torso: a filleted slab, narrower than the shoulders above it. Not a `pail`,
+     which is a bellied bucket profile with a rolled rim — correct for object
+     storage and for the base disc, and on a figure it reads as an urn.
+     Proportioned to stand a little taller than the monitor beside it (1.66u).
+     At the first height it was shorter than a desk display, which reads as a
+     child or a bollard rather than as the person operating the thing. */
+  g.add(mesh(roundedBox(0.36, 0.95, 0.27, 0.13), shell, [0, 0.525, 0]))
+  g.add(mesh(roundedBox(0.58, 0.24, 0.28, 0.11), shell, [0, 1.03, 0]))
+
+  /* Neck and head. A sphere rather than a dome, so it stays a head when the
+     camera drops below the horizon. */
+  g.add(mesh(cylinder(0.07, 0.07, 0.12, 20), steel, [0, 1.19, 0]))
+  g.add(mesh(sphere(0.19, 32, 24), shell, [0, 1.42, 0]))
+
+  /* One lit ring at the collar, the same trick the monitor uses for its power
+     LED: a single point that says the thing is present and awake. */
+  g.add(mesh(ringGeo(0.095, 0.012, 40), P.lit(0x5ce0a8, 1.7), [0, 1.16, 0], [Math.PI / 2, 0, 0]))
+
+  g.add(occlusion(2.4, 0.45))
+  return { group: g, dist: 3.9, target: V(0, 0.85, 0) }
 }
 
 /**

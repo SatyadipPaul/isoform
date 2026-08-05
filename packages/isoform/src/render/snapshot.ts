@@ -106,6 +106,17 @@ export interface StagedDocument {
   camera: THREE.Camera
   /** The padded content bounds the camera was fitted to. */
   bounds: THREE.Box3
+  /**
+   * Re-aim at a different pose, reusing this scene, and return the new camera.
+   *
+   * The whole point is that building the scene is the expensive part and moving
+   * the camera is not — the same reasoning `renderFrames` is built on. It also
+   * avoids a hazard that is not obvious: a WebGL context is bound to its canvas
+   * and `renderer.dispose()` does not release it, so staging a document N times
+   * over even a *shared* canvas still exhausts the browser's supply, and the
+   * failure lands on whatever unlucky call comes next.
+   */
+  reframe(pose: CameraPose): THREE.Camera
   /** Release the WebGL context. Always call it; a leaked context is permanent. */
   dispose(): void
 }
@@ -210,6 +221,24 @@ export function stageDocument(doc: Doc, opts: SnapshotOptions = {}): StagedDocum
     }
     camera.updateMatrixWorld(true)
 
+    /* Aim an existing perspective camera at a pose. Shared by the initial framing
+       and by `reframe`, so a swept camera is fitted exactly like a rendered one —
+       a search that measured differently-framed candidates would rank them on the
+       difference rather than on the diagrams. */
+    const aim = (cam: THREE.PerspectiveCamera, p: CameraPose): void => {
+      const r = resolvePose(p)
+      const f = fitPerspective(r.az, r.el)
+      const target = p.target ? new THREE.Vector3(...r.target) : f.target
+      const dir = new THREE.Vector3(
+        Math.cos(r.el) * Math.sin(r.az),
+        Math.sin(r.el),
+        Math.cos(r.el) * Math.cos(r.az),
+      ).normalize()
+      cam.position.copy(target).addScaledVector(dir, f.dist * r.zoom)
+      cam.lookAt(target)
+      cam.updateMatrixWorld(true)
+    }
+
     stage.fitShadow(bounds)
     if (opts.plate) stage.fitPlate(bounds)
     /* Fitted last: the cue is measured from the eye, so it needs the camera in
@@ -220,7 +249,30 @@ export function stageDocument(doc: Doc, opts: SnapshotOptions = {}): StagedDocum
     /* Nameplates billboard toward the camera, and the camera only exists now. */
     reconciler.orientLabels(camera)
 
-    return { stage, reconciler, camera, bounds, dispose: () => stage.dispose() }
+    const staged: StagedDocument = {
+      stage,
+      reconciler,
+      camera,
+      bounds,
+      reframe(pose) {
+        /* Only a perspective camera can be re-aimed in orbit space; the `iso` and
+           `top` presets are orthographic and carry their own fitting. Rather than
+           silently ignore the request, swap in a perspective camera — the caller
+           asked for a pose, which is a perspective idea. */
+        const persp =
+          staged.camera instanceof THREE.PerspectiveCamera
+            ? staged.camera
+            : new THREE.PerspectiveCamera(HERO_FOV, aspect, 0.1, 500)
+        aim(persp, pose)
+        staged.camera = persp
+        stage.fitDepthCue(bounds, persp, opts.transparent ? 0 : (opts.depthCue ?? 0))
+        /* Nameplates billboard, so they must follow the camera, never precede it. */
+        reconciler.orientLabels(persp)
+        return persp
+      },
+      dispose: () => stage.dispose(),
+    }
+    return staged
   } catch (err) {
     /* A WebGL context is a scarce, non-collectable resource, and one abandoned
        here is never reclaimed. Browsers cap how many may be live — around

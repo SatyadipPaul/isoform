@@ -31,7 +31,9 @@
 
 import * as THREE from 'three'
 import type { Doc } from '../doc/schema.js'
-import { stageDocument, type SnapshotOptions } from './snapshot.js'
+import { stageDocument, type SnapshotOptions, type StagedDocument } from './snapshot.js'
+import { PRESET_POSE } from './camera.js'
+import type { CameraPose } from './shots.js'
 
 export interface Critique {
   /** Pairs of nameplates whose screen rectangles intersect. */
@@ -135,9 +137,23 @@ const WORTH_SAYING = {
  */
 export function critique(doc: Doc, opts: SnapshotOptions = {}): Critique {
   const staged = stageDocument(doc, { labels: true, ...opts })
+  try {
+    return measureStaged(staged)
+  } finally {
+    staged.dispose()
+  }
+}
+
+/**
+ * Measure an already-built scene through its current camera.
+ *
+ * Split out so a pose search can stage once and re-aim, rather than rebuilding
+ * the whole diagram per candidate.
+ */
+function measureStaged(staged: StagedDocument): Critique {
   const { reconciler: rec, camera } = staged
 
-  try {
+  {
     /* Label plates: the face and its backing board, not the leader stem — the
        stem is a hairline and overlapping stems are not what anyone notices. */
     const plates: Rect[] = []
@@ -239,7 +255,109 @@ export function critique(doc: Doc, opts: SnapshotOptions = {}): Critique {
       clipped,
       notes,
     }
+  }
+}
+
+export interface SuggestPoseOptions extends SnapshotOptions {
+  /** Azimuths to try, evenly spaced around the diagram. */
+  azimuths?: number
+  /** Elevations to try at each azimuth. */
+  elevations?: number[]
+}
+
+export interface PoseSuggestion {
+  pose: CameraPose
+  critique: Critique
+  /** How many camera positions were measured to arrive at this one. */
+  considered: number
+}
+
+/**
+ * Search for the camera that shows this diagram best, and measure the winner.
+ *
+ * The hero preset frames anything acceptably and nothing perfectly, because the
+ * right angle is a property of the diagram rather than of the library: a system
+ * laid out along one axis lands diagonally at a fixed azimuth, filling half its
+ * frame and hiding its own clients behind other parts. There is no closed form
+ * for the fix, but there is a cheap one — try a ring of cameras and measure each
+ * with the same ruler the critique uses.
+ *
+ * Written because every caller was writing it. Recreating a stock AWS diagram,
+ * this loop took the picture from 44% of frame with a label collision and a
+ * hidden node, to 68% with neither — and the loop was forty lines of boilerplate
+ * that had nothing to do with the diagram.
+ *
+ * Ranking is lexicographic and deliberately not a weighted score: a hidden part
+ * and a buried label are *faults*, and no amount of frame filling compensates
+ * for one. Clean poses are ordered by how much of the frame they use; if none is
+ * clean, the least-bad is returned rather than nothing, because a caller asking
+ * for a camera needs a camera.
+ *
+ * Builds the scene **once** and re-aims, which is both the fast path and the
+ * only correct one. Calling `critique` per candidate looks equivalent and is
+ * not: each call constructs a `Stage`, a WebGL context is bound to its canvas,
+ * and `renderer.dispose()` does not release that binding — so even sharing one
+ * canvas across the sweep exhausts the browser's supply of contexts partway
+ * through and the failure surfaces on some later, unrelated render.
+ */
+export function suggestPose(doc: Doc, opts: SuggestPoseOptions = {}): PoseSuggestion {
+  const rings = Math.max(1, Math.round(opts.azimuths ?? 16))
+  const elevations = opts.elevations?.length ? opts.elevations : [0.3, PRESET_POSE.hero.el, 0.55]
+
+  const staged = stageDocument(doc, { labels: true, ...opts })
+  try {
+    const candidates: Array<{ pose: CameraPose; critique: Critique }> = []
+
+    for (let i = 0; i < rings; i++) {
+      const az = PRESET_POSE.hero.az + (i / rings) * Math.PI * 2
+      for (const el of elevations) {
+        const pose: CameraPose = { az, el }
+        staged.reframe(pose)
+        candidates.push({ pose, critique: measureStaged(staged) })
+      }
+    }
+
+    candidates.sort(compareCandidates)
+    return { ...candidates[0], considered: candidates.length }
   } finally {
     staged.dispose()
   }
+}
+
+/** Total measurable faults. Each is a thing a reader cannot recover from. */
+const faults = (c: Critique): number => c.occluded + c.clipped + c.labelCollisions
+
+/** How far a pose has been turned from the studio's canonical azimuth, 0..π. */
+function turnFromHero(pose: CameraPose): number {
+  const d = Math.abs(((pose.az - PRESET_POSE.hero.az) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)
+  return d > Math.PI ? Math.PI * 2 - d : d
+}
+
+/**
+ * Faults, then framing, then stay near the house angle.
+ *
+ * Deliberately lexicographic rather than a weighted score: a hidden part and a
+ * buried label are faults, and no amount of frame filling compensates for one.
+ *
+ * The last term is the one that is easy to leave out and should not be. Several
+ * poses are usually fault-free with almost identical framing, so ranking on
+ * frame use alone is decided by noise — the same document answered 23°, 327° and
+ * 147° across three runs that differed only in a part's height. Worse, some of
+ * those winners look *wrong* in a way no metric here can see: parts have a front,
+ * and a camera behind the client monitor scores perfectly while showing the
+ * reader the blank back of the screen. Framing is therefore compared in coarse
+ * steps and ties break toward the hero azimuth, so the search deviates from the
+ * house angle only when it genuinely buys something.
+ */
+function compareCandidates(
+  a: { pose: CameraPose; critique: Critique },
+  b: { pose: CameraPose; critique: Critique },
+): number {
+  const df = faults(a.critique) - faults(b.critique)
+  if (df !== 0) return df
+  /* 2% steps: below that the difference is not visible in the picture. */
+  const step = (c: Critique): number => Math.round(c.frameUse * 50)
+  const dframe = step(b.critique) - step(a.critique)
+  if (dframe !== 0) return dframe
+  return turnFromHero(a.pose) - turnFromHero(b.pose)
 }

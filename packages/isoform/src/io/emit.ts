@@ -66,7 +66,6 @@ function idIsSafe(id: string): boolean {
 /** Facts about one node that the text format has nowhere to put. */
 function nodeGaps(n: DocNode): string[] {
   const out: string[] = []
-  if (n.sublabel) out.push(`sublabel ${quote(n.sublabel)}`)
   if (n.y) out.push(`tier ${n.y}`)
   if (n.rot) out.push(`rotated ${n.rot.toFixed(3)} rad`)
   if (n.scale !== undefined && n.scale !== 1) out.push(`scale ${n.scale}`)
@@ -75,7 +74,6 @@ function nodeGaps(n: DocNode): string[] {
 
 function edgeGaps(e: DocEdge): string[] {
   const out: string[] = []
-  if (e.label) out.push(`label ${quote(e.label)}`)
   if (e.from.port) out.push(`from port ${e.from.port}`)
   if (e.to.port) out.push(`to port ${e.to.port}`)
   if (e.route === 'manual') {
@@ -150,7 +148,11 @@ export function toDsl(doc: Doc, opts: DslEmitOptions = {}): string {
 
   for (const n of doc.nodes) {
     const bits = [n.id.padEnd(idW), n.type.padEnd(typeW)]
-    if (n.label) bits.push(quote(n.label))
+    /* A sublabel is the *second* quoted string, so it cannot be written without
+       the first — an unlabelled node with a sublabel would read its sublabel as
+       its label. Emitting the id as the label keeps the pair positional. */
+    if (n.label || n.sublabel) bits.push(quote(n.label ?? n.id))
+    if (n.sublabel) bits.push(quote(n.sublabel))
     if (n.tint) bits.push(n.tint)
     if (n.state) bits.push(n.state)
     lines.push(bits.join('  ').trimEnd() + comment(nodeGaps(n)))
@@ -159,7 +161,8 @@ export function toDsl(doc: Doc, opts: DslEmitOptions = {}): string {
   if (doc.edges.length) {
     lines.push('')
     for (const e of doc.edges) {
-      lines.push(`${e.from.node} ${ARROW[e.kind]} ${e.to.node}` + comment(edgeGaps(e)))
+      const label = e.label ? ` ${quote(e.label)}` : ''
+      lines.push(`${e.from.node} ${ARROW[e.kind]} ${e.to.node}${label}` + comment(edgeGaps(e)))
     }
   }
 

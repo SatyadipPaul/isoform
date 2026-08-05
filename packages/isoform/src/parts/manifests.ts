@@ -397,6 +397,22 @@ export const MANIFESTS: Record<PartId, PartManifest> = {
     spec: ['1.56 × 1.0u', 'Tilt 8°'],
   },
 
+  actor: {
+    id: 'actor',
+    name: 'Person',
+    pn: 'CLI-04',
+    cat: 'client',
+    finish: 'Polymer + rubber base',
+    /* The weighted disc, not the shoulders: the base is the widest thing and is
+       what a neighbour would collide with. */
+    footprint: { w: 0.9, d: 0.9 },
+    height: 1.61,
+    ...anchors(0.5),
+    camera: { dist: 3.9, target: [0, 0.85, 0] },
+    desc: 'Mannequin on a weighted disc. No face and no limbs: an actor has to stand beside equipment without becoming the subject, and it is symmetrical so a turntable never catches its back.',
+    spec: ['0.9 × 0.9u', 'Stands 1.61u'],
+  },
+
   mobile: {
     id: 'mobile',
     name: 'Handset',

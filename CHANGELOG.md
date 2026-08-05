@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.8.0 — Diagrams are mostly verbs
+
+Found by trying to recreate a stock AWS ECS diagram using nothing but the public
+API, as an agent would have to. It has seven labelled connectors — *Create ECS
+Cluster*, *Login*, *Access ALB via dynamic port*, *Users accessing container via
+SSH* — and the library could draw none of them.
+
+### Connectors carry their labels
+
+`DocEdge.label` was in the schema, accepted by the type checker, and reported by
+`dslGaps`. **Nothing rendered it.** The only readers were the DSL's *node* label
+and the gap reporter. So a caller set it, saw no error, rendered successfully,
+and shipped a diagram with its verbs missing — silent, which is the failure mode
+this project keeps having to design against.
+
+```
+user -> alb "Access ALB via dynamic port"
+alb  -> app "Dynamic port mapping via Target group"
+```
+
+The tag sits at the route's **arc-length** midpoint, not its middle vertex: an L
+or a Z bunches its corner vertices, so the middle one by index can land almost on
+an endpoint. It goes through the same declutter pass as every other tag — a
+connector runs *between* parts, so its midpoint is exactly where the parts' own
+tags are heading, and a separate pass would let the two collections resolve into
+each other. It dims with the line it names, because text is the loudest thing in
+a frame and a bright verb on a played-down connector reads as emphasis on it.
+
+Drawn at 0.78 scale. A diagram has more connectors than parts, and at equal
+weight the verbs shout over the nouns.
+
+### The text format carries everything it draws
+
+A **sublabel** was renderable and unwritable — the nameplate had always drawn one
+and the grammar had no way to say it, so a document using one could be drawn and
+could not be exported as text. That is the worst combination available: reaching
+for the feature meant leaving the format permanently. A second quoted string is
+now the sublabel, and `dslGaps` on the recreated AWS diagram is empty.
+
+### `actor` — the catalog had no people in it
+
+Twenty-five parts, every one of them equipment. Drawing a person meant drawing a
+monitor, and in the AWS recreation "User" and "AWS Management Console" rendered
+as the same object, separable only by tint.
+
+A mannequin, not a cartoon: no face, no limbs, symmetrical so a turntable never
+catches its back, and proportioned to stand a little taller than the monitor
+beside it. Two corrections came from looking at it — `pail` is `(rTop, rBottom,
+height)`, and passing a height into the second slot produced a wide flared skirt;
+then the bellied bucket profile that is right for object storage read as an urn
+on a figure, and became a filleted slab.
+
+### `suggestPose`
+
+Every caller was writing this loop. On the AWS diagram it moved the picture from
+44% of frame with a label collision and a hidden node, to 60–68% with neither.
+
+```ts
+const { pose, critique } = suggestPose(doc)
+```
+
+Ranked lexicographically — faults, then framing in 2% steps, then proximity to
+the hero azimuth. Not a weighted score: a hidden part is a *fault* and no amount
+of frame filling compensates for one. The last term is not cosmetic. Several
+poses are usually fault-free with near-identical framing, so ranking on framing
+alone is decided by noise — the same document answered 23°, 327° and 147° across
+three runs differing only in one part's height — and some of those winners put
+the camera behind the client monitor, which scores perfectly while showing the
+reader the blank back of the screen.
+
+**It stages the scene once and re-aims.** Calling `critique` per candidate looks
+equivalent and is not: a WebGL context is bound to its canvas and
+`renderer.dispose()` does not release it, so even sharing one canvas across the
+sweep exhausts the browser's supply partway through — and the failure lands on
+whatever unrelated render comes next. That is exactly how the first version
+failed. `StagedDocument.reframe` is the seam, and 48 candidates now cost ~400 ms.
+
 ## 0.7.0 — Surfaces for a reader who cannot orbit
 
 Everything shipped so far assumed someone looking at a screen and moving the
