@@ -190,3 +190,70 @@ describe('declutter', () => {
     expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeLessThan(0.02)
   })
 })
+
+describe('tags stay readable as the camera climbs', () => {
+  /** Camera at `el` above the horizon, looking at the origin from distance 14. */
+  function cameraAt(el: number): THREE.PerspectiveCamera {
+    const cam = new THREE.PerspectiveCamera(32, 2, 0.1, 500)
+    const d = 14
+    cam.position.set(Math.sin(0.6) * Math.cos(el) * d, Math.sin(el) * d, Math.cos(0.6) * Math.cos(el) * d)
+    cam.lookAt(0, 1, 0)
+    cam.updateMatrixWorld(true)
+    return cam
+  }
+
+  /**
+   * How square-on the tag is to the camera, 1 being face-on.
+   *
+   * This is the quantity the reader experiences as letter shape: an upright
+   * plate viewed from `el` above projects to `cos(el)` of its height, and text
+   * squashed to 60% of its height does not read as a plate seen from above — it
+   * reads as text that has been stretched sideways.
+   */
+  function facing(el: number): number {
+    const cam = cameraAt(el)
+    const n = makeNameplate('replication controller', 'sub', 'compute')
+    orientNameplate(n, new THREE.Vector3(0, 1, 0), cam)
+    n.group.updateWorldMatrix(true, true)
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(n.group.quaternion).normalize()
+    const toCam = cam.position.clone().sub(n.group.position).normalize()
+    return normal.dot(toCam)
+  }
+
+  it('never squashes a tag below the readable floor, however high the camera', () => {
+    /* Upright-only billboarding falls to 0.36 at 69° and 0.12 at 83°. */
+    for (const el of [0, 0.2, 0.42, 0.6, 0.8, 0.95, 1.2, 1.45]) {
+      expect(facing(el), `elevation ${el}`).toBeGreaterThan(0.85)
+    }
+  })
+
+  it('leaves the tag perfectly upright while the squash is imperceptible', () => {
+    /* The tag is a plate standing in the scene, not a sticker pasted over it.
+       Tilting it when nothing is wrong would throw that away for nothing. */
+    for (const el of [0, 0.1, 0.2, 0.3, 0.42]) {
+      const cam = cameraAt(el)
+      const n = makeNameplate('orders', undefined, 'compute')
+      orientNameplate(n, new THREE.Vector3(0, 1, 0), cam)
+      const up = new THREE.Vector3(0, 1, 0).applyQuaternion(n.group.quaternion)
+      expect(up.y, `elevation ${el} should not tip`).toBeCloseTo(1, 6)
+    }
+  })
+
+  it('keeps the stem attached to the underside once the tag tips', () => {
+    /* The underside travels with the tilt. Dropping straight down in world Y
+       leaves a visible gap between the leader and the plate it points to. */
+    const cam = cameraAt(1.2)
+    const n = makeNameplate('orders', undefined, 'compute')
+    const anchor = new THREE.Vector3(0, 1, 0)
+    orientNameplate(n, anchor, cam)
+
+    const down = new THREE.Vector3(0, -1, 0).applyQuaternion(n.group.quaternion)
+    const underside = n.group.position.clone().addScaledVector(down, n.height / 2)
+    /* The stem spans anchor → underside, so its far end must land there. */
+    const farEnd = n.stem.position.clone().addScaledVector(
+      new THREE.Vector3(0, 1, 0).applyQuaternion(n.stem.quaternion),
+      n.stem.scale.y / 2,
+    )
+    expect(farEnd.distanceTo(underside)).toBeLessThan(1e-6)
+  })
+})

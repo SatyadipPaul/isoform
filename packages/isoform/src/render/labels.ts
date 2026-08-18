@@ -273,6 +273,33 @@ export function setNameplateDimmed(n: Nameplate, dim: boolean): void {
 }
 
 /**
+ * How much of a tag's height must survive projection, at worst.
+ *
+ * An upright plate seen from a camera `el` above the horizon is foreshortened by
+ * `cos(el)`. At the hero elevation that is 0.91 — a 9% squash nobody notices —
+ * but the viewer lets a reader orbit anywhere, and by 54° it is 0.59 and by 69°
+ * it is 0.36. What that looks like is not "a plate seen from above": it looks
+ * like the *text* has been stretched sideways, which is how this was reported.
+ *
+ * So the plate stays exactly upright while the squash is imperceptible, and past
+ * that tips back only as far as it must to hold this floor. 0.86 keeps the
+ * letterforms honest while leaving the tag reading as a plate standing in the
+ * scene rather than a sticker pasted over it — which is why turning about Y
+ * alone was right in the first place, and why the fix is a cap and not a
+ * full billboard.
+ */
+const MIN_FACING = 0.86
+
+/** Below this camera elevation the tag does not tip at all. ~30.7°. */
+const TILT_FREE = Math.acos(MIN_FACING)
+
+const AXIS_Y = new THREE.Vector3(0, 1, 0)
+const AXIS_X = new THREE.Vector3(1, 0, 0)
+/* Scratch, so per-frame orientation of hundreds of tags allocates nothing. */
+const pitchQuat = new THREE.Quaternion()
+const localDown = new THREE.Vector3()
+
+/**
  * Float a tag above `top` and turn it to face the viewer.
  *
  * `top` is the part's apex, so the tag clears whatever it names regardless of
@@ -281,18 +308,34 @@ export function setNameplateDimmed(n: Nameplate, dim: boolean): void {
 export function orientNameplate(n: Nameplate, top: THREE.Vector3, camera: THREE.Camera): void {
   n.group.position.set(top.x, top.y + LIFT + n.height / 2, top.z)
 
-  const dx = camera.position.x - top.x
-  const dz = camera.position.z - top.z
-  /* Turn about Y only. Tilting to face a raised camera would make the tag read
-     as a floating sticker rather than a plate standing in the scene. */
-  n.group.rotation.y = Math.atan2(dx, dz)
+  /* Measured from the plate rather than from the part it names: the plate rides
+     `LIFT` above the apex, and at a low camera that difference is most of the
+     elevation angle. */
+  const dx = camera.position.x - n.group.position.x
+  const dy = camera.position.y - n.group.position.y
+  const dz = camera.position.z - n.group.position.z
+  const yaw = Math.atan2(dx, dz)
+  const el = Math.atan2(dy, Math.hypot(dx, dz))
+
+  /* Negative rotation about local X tips the face (+Z) upward, toward a camera
+     above. Signed, so a camera below the tag tips it the other way. */
+  const tip = Math.max(0, Math.abs(el) - TILT_FREE)
+  const pitch = el >= 0 ? -tip : tip
+
+  n.group.quaternion
+    .setFromAxisAngle(AXIS_Y, yaw)
+    .multiply(pitchQuat.setFromAxisAngle(AXIS_X, pitch))
   layStem(n, top)
 }
 
 /** Stretch the stem from the part's apex to the underside of the tag. */
 function layStem(n: Nameplate, top: THREE.Vector3): void {
   const from = top
-  const to = n.group.position.clone().setY(n.group.position.y - n.height / 2)
+  /* The underside travels with the tilt, so it is found through the plate's own
+     orientation. Dropping straight down in world Y instead leaves the stem
+     visibly unattached once the tag tips. */
+  localDown.set(0, -1, 0).applyQuaternion(n.group.quaternion)
+  const to = n.group.position.clone().addScaledVector(localDown, n.height / 2)
   const dir = to.clone().sub(from)
   const len = dir.length()
   if (len < 1e-4) {
@@ -350,20 +393,31 @@ export function declutter(
      no overlaps anywhere and quietly does nothing, which measures exactly like a
      diagram whose labels were never decluttered at all. */
   const at = new THREE.Vector3()
-  const project = (c: THREE.Vector3, dx: number, dy: number): THREE.Vector3 =>
-    at.set(c.x, c.y + dy, c.z).addScaledVector(right, dx).project(camera)
+  const up = new THREE.Vector3()
+  /** Project a point offset from `c` by `dx` along `right` and `dy` along `axis`. */
+  const project = (
+    c: THREE.Vector3,
+    dx: number,
+    dy: number,
+    axis: THREE.Vector3,
+  ): THREE.Vector3 => at.copy(c).addScaledVector(right, dx).addScaledVector(axis, dy).project(camera)
 
   const items = plates.map((p) => {
     const c = p.plate.group.position
-    const centre = project(c, 0, 0)
+    /* The tag's own up, not the world's. Past ~31° of camera elevation a tag
+       tips back to stay readable, and measuring its height straight up in world
+       Y then reports a box that is not the one on screen — which is exactly the
+       elevation range where tags crowd together and the pass matters most. */
+    up.set(0, 1, 0).applyQuaternion(p.plate.group.quaternion)
+    const centre = project(c, 0, 0, up)
     const x = centre.x
     const y = centre.y
     /* Screen scale of this tag, measured rather than derived: one world unit
        along `right` is this many NDC units at this tag's depth. */
-    const perUnit = project(c, 1, 0).x - x
+    const perUnit = project(c, 1, 0, up).x - x
     /* Half-extents on screen, from the plate's own size. */
-    const hw = Math.abs(project(c, p.plate.width / 2, 0).x - x)
-    const hh = Math.abs(project(c, 0, p.plate.height / 2).y - y)
+    const hw = Math.abs(project(c, p.plate.width / 2, 0, up).x - x)
+    const hh = Math.abs(project(c, 0, p.plate.height / 2, up).y - y)
     return { ...p, x, y, hw, hh, perUnit }
   })
   /* Tags only fight if they share a band of screen height, so solve each band on
@@ -441,7 +495,7 @@ export function declutter(
        sliding sideways; leaving it is better than dividing by ~zero and
        flinging it out of the frame. */
     if (Math.abs(it.perUnit) < 1e-6) continue
-    const nowX = project(it.plate.group.position, 0, 0).x
+    const nowX = project(it.plate.group.position, 0, 0, AXIS_Y).x
     it.plate.group.position.addScaledVector(right, (it.x - nowX) / it.perUnit)
     layStem(it.plate, it.top)
   }

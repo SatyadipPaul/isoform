@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.8.1 — Tags stay readable when you look down at them
+
+Reported from a live export: labels render correctly from some angles and
+"stretched sideways" from others. Reproduced at the reported camera, and the
+cause is not stretching at all.
+
+Nameplates turned about Y only, so a tag stayed exactly upright in the world
+while the camera climbed. An upright plate seen from `el` above the horizon
+projects to `cos(el)` of its height:
+
+| camera elevation | height that survives |
+|---|---|
+| 24° (the hero pose) | 0.91 |
+| 46° | 0.70 |
+| 69° | 0.36 |
+| 83° | 0.12 |
+
+At the hero angle that is a 9% squash nobody notices, which is why it was never
+seen in a still. But the viewer lets a reader orbit anywhere, and by 54° the
+letterforms are compressed to well under two thirds of their height — which does
+not read as "a plate seen from above", it reads as text that has been stretched.
+The low-camera screenshot in the same report was pristine, and that is the tell:
+the fault tracks elevation exactly.
+
+A tag now holds its ground until the squash is imperceptible and then tips back
+only as far as it must, never falling below 0.86 of its height at any elevation.
+Below ~31° nothing tilts at all, so the plate keeps reading as a machined object
+standing in the scene rather than a sticker pasted over it — which is what
+turning about Y alone was protecting, and why this is a cap rather than a full
+billboard.
+
+Two things followed from the tilt and would each have been a quiet defect:
+
+- The **leader stem** measured the plate's underside straight down in world Y.
+  Once a tag tips, the underside moves with it, and the stem detached visibly. It
+  now travels through the plate's own orientation.
+- **`declutter`** measured each tag's half-height along world Y for the same
+  reason, so past ~31° it was resolving collisions against a box that was not the
+  one on screen — precisely the elevation range where tags crowd together and the
+  pass matters most.
+
+No change at the hero pose: the five reference architectures measure identically
+— 0 collisions, 0 clipped, same frame use and occlusion.
+
 ## 0.8.0 — Diagrams are mostly verbs
 
 Found by trying to recreate a stock AWS ECS diagram using nothing but the public
