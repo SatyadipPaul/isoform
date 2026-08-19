@@ -65,43 +65,41 @@ jobs:
       - run: npm run build:lib
 
       # `--provenance` attaches a signed statement linking the tarball to this
-      # commit and workflow. npm shows it as a "Built and signed" badge, which
-      # is the visible half of what trusted publishing buys.
+      # commit and workflow. npm shows it as a "Built and signed" badge.
       #
-      # Two auth modes, and which one runs depends only on whether the NPM_TOKEN
-      # secret exists.
+      # OIDC IS THE DEFAULT, AND THE PRESENCE OF A SECRET NO LONGER CHANGES THAT.
+      # It used to: the step took the token branch whenever NPM_TOKEN existed, so
+      # once that token expired — or fell under npm's restriction on tokens that
+      # bypass 2FA — every release failed with a masked `404 ... could not be
+      # found or you do not have permission`, while trusted publishing sat
+      # configured and untried. A credential that silently wins over the one you
+      # meant to use is worse than no credential.
       #
-      # BOOTSTRAP (first publish only). Trusted publishing is configured on a
-      # package's settings page, and a package that has never been published has
-      # no settings page — the first OIDC attempt failed with
-      # "404 The requested resource 'isoform@0.3.0' could not be found".
-      # So the name has to be claimed once with a token.
-      #
-      # STEADY STATE. Once the package exists and the repository is registered
-      # as its trusted publisher, delete the NPM_TOKEN secret. npm then falls
-      # back to the OIDC credential minted above, and there is no long-lived
-      # token anywhere — which is the whole point, and is mandatory from
-      # January 2027 when bypass tokens stop working for publishing.
+      # To go back to the token deliberately, set the repository *variable*
+      # USE_NPM_TOKEN to "true". A variable, not a secret, so the choice is
+      # visible in the settings UI rather than inferred from what exists.
       - name: Publish
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Deliberately not NODE_AUTH_TOKEN. Naming it that would let the
+          # .npmrc `setup-node` wrote pick it up automatically, which is the
+          # behaviour being removed here.
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          USE_TOKEN: ${{ vars.USE_NPM_TOKEN }}
         run: |
           npm --version
-          if [ -n "$NODE_AUTH_TOKEN" ]; then
-            echo "::notice::Publishing with NPM_TOKEN (bootstrap). Delete the secret once trusted publishing is configured."
+          if [ "$USE_TOKEN" = "true" ] && [ -n "$NPM_TOKEN" ]; then
+            echo "::notice::Publishing with NPM_TOKEN, because the USE_NPM_TOKEN variable asks for it."
+            export NODE_AUTH_TOKEN="$NPM_TOKEN"
           else
-            echo "::notice::No NPM_TOKEN present — publishing via OIDC trusted publishing."
+            echo "::notice::Publishing via OIDC trusted publishing."
             # `setup-node` with `registry-url` writes an .npmrc line reading
-            # //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
-            # and with the secret gone that expands to an EMPTY credential.
-            # npm then rejects it as bad auth rather than falling through to
-            # OIDC, so the trusted-publishing path is never reached and the
-            # failure reads like a missing token — which is exactly the shape
-            # of the v0.8.1 failure: every gate green, `Publish` red.
+            #   //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+            # Leaving it in place makes npm authenticate as whoever that token
+            # is, so the OIDC claim is never presented.
             for f in "$NPM_CONFIG_USERCONFIG" "$HOME/.npmrc"; do
               if [ -n "$f" ] && [ -f "$f" ]; then
                 sed -i '/_authToken/d' "$f"
-                echo "cleared the empty auth line from $f"
+                echo "cleared the token line from $f"
               fi
             done
           fi
