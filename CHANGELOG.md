@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.8.2 — Tags thin out, the way a map's do
+
+Two rounds on one report. The first bounded how far a tag may be slid; this one
+decides what happens to the tags that still do not fit, which is the half that
+was actually a design decision.
+
+### The threads
+
+`declutter` slides a tag sideways and its leader stem stretches to follow, and
+the pass had no limit on the slide. Tags share a chain only if they share a band
+of screen height — and a low camera flattens the whole diagram into one band, so
+every tag joins one chain, the required gaps accumulate across the entire set,
+and the solve spreads them wider than the frame.
+
+Measured on a 26-part diagram 39.6 units across, 7° above the horizon: the median
+tag was slid **26.7 units** and the worst **49.5** — further than the whole system
+is wide, with 34 of 54 dragged past half the diagram. What that draws is not a
+displaced label; it is a hairline stretched clean across the picture. A tag now
+travels at most about three of its own widths.
+
+Three and not less: six long tags crammed into two world units genuinely need
+that much room, and a tighter bound turned the pass off for diagrams it was
+already solving — so the bound was tuned against those tests rather than picked.
+
+### What happens to the rest
+
+Bounding the slide leaves tags overlapping, and a mat of stacked plates is not a
+design, it is a shrug. There are three things a renderer can do with a tag that
+will not fit, and only one of them is readable:
+
+- **Slide it further** — the threads above.
+- **Let it overlap** — honest about the crowding, useless to read.
+- **Drop it** — what every map renderer does.
+
+So the set now thins as the view gets harder, exactly the way street-level labels
+thin when a map tilts toward the horizon. Boundaries name whole tiers and outlive
+parts, parts outlive connectors, ties go to whatever is nearest the camera, and
+nothing is deleted — a tag hidden at one angle returns the moment the camera
+gives it room.
+
+| | before | after |
+|---|---|---|
+| worst overlap, low camera | 100% | **15%** |
+| collisions, low camera | 58 | 10 |
+| tags shown, low camera | 54 of 54, unreadable | 36 of 54, all readable |
+| tags shown, hero | 54 of 54 | 45 of 54 |
+
+Nothing is lost where there was room: all five reference architectures keep
+**every** tag — 17/17, 14/14, 13/13, 12/12, 10/10 — at 0 collisions.
+
+`critique` now ignores tags the pass dropped. Counting hidden plates would report
+faults in a picture that does not contain them.
+
+One measurement bug found on the way: the cull first judged overlap from a probe
+of the plate's width and height alone, ignoring its thickness. That box is
+smaller than the one drawn, so pairs passed the cull and were then counted as
+collisions by the metric — 11 of them, one at 55%, on a view this had just
+declared clear. Both now project the plate's full oriented box.
+
 ## 0.8.2 — Leaders that stay leaders
 
 The reported fault, correctly this time. 0.8.1 fixed a real defect at *high*

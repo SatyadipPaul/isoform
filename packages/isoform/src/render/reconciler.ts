@@ -18,11 +18,13 @@ import { boundary } from '../parts/boundary.js'
 import { instantiateMerged, mergeWorld, mergedFor } from './merge.js'
 import { NodeBatcher } from './batch.js'
 import {
+  LABEL_RANK,
   declutter,
   disposeNameplate,
   makeNameplate,
   orientNameplate,
   setNameplateDimmed,
+  type PlacedLabel,
   type Nameplate,
 } from './labels.js'
 import { setStubsVisible } from '../foundry/geometry.js'
@@ -849,12 +851,12 @@ export class Reconciler {
    */
   orientLabels(camera: THREE.Camera, declutterOverlaps = true): void {
     if (!this.labelLayer.visible) return
-    const plates: Array<{ plate: Nameplate; top: THREE.Vector3 }> = []
+    const plates: PlacedLabel[] = []
     for (const v of this.nodes.values()) {
       if (!v.label) continue
       const top = this.apexOf(v.last)
       orientNameplate(v.label, top, camera)
-      plates.push({ plate: v.label, top })
+      plates.push({ plate: v.label, top, rank: LABEL_RANK.node })
     }
     for (const v of this.groups.values()) {
       if (!v.label) continue
@@ -862,7 +864,7 @@ export class Reconciler {
       /* A boundary's tag rides at the height of its own volume. */
       const top = new THREE.Vector3(g.pos[0], g.size[1], g.pos[1])
       orientNameplate(v.label, top, camera)
-      plates.push({ plate: v.label, top })
+      plates.push({ plate: v.label, top, rank: LABEL_RANK.group })
     }
     /* Connector tags go through the same pass as everything else. They are the
        tags most likely to land on something — a route runs *between* parts, so
@@ -872,7 +874,7 @@ export class Reconciler {
       if (!v.label) continue
       const at = midpointOf(v.points)
       orientNameplate(v.label, at, camera)
-      plates.push({ plate: v.label, top: at })
+      plates.push({ plate: v.label, top: at, rank: LABEL_RANK.edge })
     }
     /* Optional because decluttering resolves overlaps along the camera's right
        vector, and that vector turns as the camera orbits — so the arrangement it

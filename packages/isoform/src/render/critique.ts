@@ -159,6 +159,10 @@ function measureStaged(staged: StagedDocument): Critique {
     const plates: Rect[] = []
     for (const child of rec.labelLayer.children) {
       if (!(child as THREE.Group).isGroup) continue
+      /* A tag the declutter pass dropped is not on screen, so it can neither
+         collide nor be clipped. Counting hidden plates would report faults in a
+         picture that does not contain them. */
+      if (!child.visible) continue
       const r = screenRect(child, camera)
       if (r) plates.push(r)
     }

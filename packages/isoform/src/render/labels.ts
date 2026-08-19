@@ -375,10 +375,64 @@ const LABEL_GAP_NDC = 0.012
  * a tag at the back of the diagram needs more world movement per pixel than one
  * at the front.
  */
-export function declutter(
-  plates: Array<{ plate: Nameplate; top: THREE.Vector3 }>,
-  camera: THREE.Camera,
-): void {
+/**
+ * A tag's half-extents on screen, from its full oriented box.
+ *
+ * Every corner of (width × height × thickness) carried through the plate's own
+ * world matrix and projected. That is what the reader sees and what `critique`
+ * counts, and any cheaper probe measures a smaller rectangle than the one drawn.
+ */
+function plateRect(n: Nameplate, camera: THREE.Camera): { hw: number; hh: number } {
+  n.group.updateWorldMatrix(true, false)
+  const hx = n.width / 2
+  const hy = n.height / 2
+  /* The text quad sits just proud of the front face, so the box is a shade
+     deeper than the plate itself. */
+  const hz = PLATE_D / 2 + 0.004
+  let x0 = Infinity
+  let y0 = Infinity
+  let x1 = -Infinity
+  let y1 = -Infinity
+  for (const sx of [-hx, hx]) {
+    for (const sy of [-hy, hy]) {
+      for (const sz of [-hz, hz]) {
+        corner.set(sx, sy, sz).applyMatrix4(n.group.matrixWorld).project(camera)
+        x0 = Math.min(x0, corner.x)
+        x1 = Math.max(x1, corner.x)
+        y0 = Math.min(y0, corner.y)
+        y1 = Math.max(y1, corner.y)
+      }
+    }
+  }
+  return { hw: (x1 - x0) / 2, hh: (y1 - y0) / 2 }
+}
+
+const corner = new THREE.Vector3()
+
+/**
+ * What a tag is worth keeping, when not all of them fit. Lower wins.
+ *
+ * A boundary names a whole tier and is the coarsest thing on screen, so it is
+ * the last thing to give up; a connector tag is the finest and there are the
+ * most of them. Ties break on distance, nearest first.
+ */
+export const LABEL_RANK = { group: 0, node: 1, edge: 2 } as const
+
+export type LabelRank = (typeof LABEL_RANK)[keyof typeof LABEL_RANK]
+
+export interface PlacedLabel {
+  plate: Nameplate
+  top: THREE.Vector3
+  rank?: LabelRank
+}
+
+export function declutter(plates: PlacedLabel[], camera: THREE.Camera): void {
+  /* Everything is shown until this pass decides otherwise, and the decision is
+     remade every frame — the camera moves, so what fits changes. */
+  for (const p of plates) {
+    p.plate.group.visible = true
+    p.plate.stem.visible = true
+  }
   if (plates.length < 2) return
 
   const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0)
@@ -415,9 +469,15 @@ export function declutter(
     /* Screen scale of this tag, measured rather than derived: one world unit
        along `right` is this many NDC units at this tag's depth. */
     const perUnit = project(c, 1, 0, up).x - x
-    /* Half-extents on screen, from the plate's own size. */
-    const hw = Math.abs(project(c, p.plate.width / 2, 0, up).x - x)
-    const hh = Math.abs(project(c, 0, p.plate.height / 2, up).y - y)
+    /* Half-extents from the plate's whole projected box, corners and all — the
+       same rectangle `critique` measures, so the two agree about what overlaps.
+       Probing only the width and height axes ignores the plate's thickness, and
+       the resulting box is small enough that pairs pass this pass and are then
+       counted as collisions by the metric: 11 of them, one at 55%, on a diagram
+       this had just declared clear. */
+    const box = plateRect(p.plate, camera)
+    const hw = box.hw
+    const hh = box.hh
     /* `x0` is home — where the tag sits over the part that owns it. Travel is
        measured from there, never from wherever the solver has drifted to. */
     return { ...p, x, y, x0: x, hw, hh, perUnit }
@@ -525,14 +585,89 @@ export function declutter(
   }
 
   for (const it of items) {
+    /* Commit the bound into `x` before anything reads it. The cull below decides
+       what fits from these coordinates, and the solver's unclamped answer is not
+       where the tag ends up — reading that instead compares tags at positions
+       spread far wider than the ones drawn, finds no overlaps, and quietly keeps
+       everything. */
+    it.x = clamped(it)
     /* Back to world along `right`, through this tag's own scale. A degenerate
        scale means the tag is edge-on to the camera and cannot be resolved by
        sliding sideways; leaving it is better than dividing by ~zero and
        flinging it out of the frame. */
     if (Math.abs(it.perUnit) < 1e-6) continue
     const nowX = project(it.plate.group.position, 0, 0, AXIS_Y).x
-    it.plate.group.position.addScaledVector(right, (clamped(it) - nowX) / it.perUnit)
+    it.plate.group.position.addScaledVector(right, (it.x - nowX) / it.perUnit)
     layStem(it.plate, it.top)
+  }
+
+  cull(items, camera)
+}
+
+/**
+ * How much of a tag may disappear under another before it is dropped instead.
+ *
+ * Not zero: tags touching at the corner are still both readable, and a zero
+ * tolerance makes the set flicker as the camera drifts.
+ */
+const CULL_OVERLAP = 0.18
+
+/**
+ * Hide the tags that did not fit, instead of letting them pile up.
+ *
+ * Sliding can only do so much. Once a tag is at the end of its leash and still
+ * covered, there are three things a renderer can do with it, and only one of
+ * them is a design:
+ *
+ *  - **Slide it further.** What this used to do. Past a few of its own widths
+ *    the leader stops associating anything and the picture fills with hairlines
+ *    running across it.
+ *  - **Let it overlap.** What the previous fix did. Honest about the crowding
+ *    and useless to read: at a low camera the whole diagram flattens into one
+ *    band and dozens of tags stack into an illegible mat.
+ *  - **Drop it.** What every map renderer does, and the only one that leaves
+ *    every tag still on screen readable.
+ *
+ * So the set thins as the view gets harder, exactly the way street-level labels
+ * thin when a map is tilted toward the horizon. Priority decides who survives:
+ * boundaries name whole tiers and outlive parts, parts outlive connectors, and
+ * ties go to whatever is nearest the camera. Nothing is deleted — a tag hidden
+ * at this angle is shown again the moment the camera moves somewhere it fits.
+ */
+function cull(
+  items: Array<PlacedLabel & { x: number; y: number; hw: number; hh: number }>,
+  camera: THREE.Camera,
+): void {
+  const eye = camera.getWorldPosition(new THREE.Vector3())
+  const order = [...items].sort(
+    (a, b) =>
+      (a.rank ?? LABEL_RANK.node) - (b.rank ?? LABEL_RANK.node) ||
+      a.plate.group.position.distanceToSquared(eye) -
+        b.plate.group.position.distanceToSquared(eye),
+  )
+
+  const kept: typeof order = []
+  for (const it of order) {
+    const area = 4 * it.hw * it.hh
+    let worst = 0
+    for (const k of kept) {
+      const w = Math.min(it.x + it.hw, k.x + k.hw) - Math.max(it.x - it.hw, k.x - k.hw)
+      const h = Math.min(it.y + it.hh, k.y + k.hh) - Math.max(it.y - it.hh, k.y - k.hh)
+      if (w <= 0 || h <= 0) continue
+      /* Judged against the *smaller* of the pair, which is the one that loses
+         legibility first and is exactly what `critique` counts. Measuring only
+         against the newcomer's own area lets a small tag sit almost entirely on
+         top of a large one and still pass, because the damage is nearly all to
+         the tag it covers. */
+      const smaller = Math.min(area, 4 * k.hw * k.hh)
+      if (smaller > 0) worst = Math.max(worst, (w * h) / smaller)
+    }
+    if (worst > CULL_OVERLAP) {
+      it.plate.group.visible = false
+      it.plate.stem.visible = false
+      continue
+    }
+    kept.push(it)
   }
 }
 

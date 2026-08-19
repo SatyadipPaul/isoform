@@ -17,10 +17,12 @@ import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 import { palette } from '../foundry/materials.js'
 import {
+  LABEL_RANK,
   declutter,
   makeNameplate,
   orientNameplate,
   setNameplateDimmed,
+  type LabelRank,
   type Nameplate,
 } from './labels.js'
 
@@ -304,5 +306,85 @@ describe('a leader stays a leader', () => {
     expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeGreaterThan(0.2)
     declutter(ts, cam)
     expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeLessThan(0.02)
+  })
+})
+
+describe('tags thin out instead of piling up', () => {
+  function rankedTag(title: string, at: THREE.Vector3, cam: THREE.Camera, rank: LabelRank) {
+    const plate = makeNameplate(title, undefined, 'compute')
+    orientNameplate(plate, at, cam)
+    return { plate, top: at, rank }
+  }
+
+  it('keeps every tag when there is room for every tag', () => {
+    /* The pass must cost nothing on the diagrams it was already solving. */
+    const cam = viewer()
+    const ts = [-6, -2, 2, 6].map((x, i) => tag(`svc-${i}`, new THREE.Vector3(x, 1, 0), cam))
+    declutter(ts, cam)
+    expect(ts.every((t) => t.plate.group.visible)).toBe(true)
+  })
+
+  it('drops what will not fit rather than stacking it', () => {
+    /* Sliding can only do so much. Once a tag is at the end of its leash and
+       still buried, the choice is to overlap or to disappear — and a mat of
+       stacked plates is not readable at any of them. */
+    const cam = viewer()
+    const ts = Array.from({ length: 24 }, (_, i) =>
+      tag(`replication-controller-${i}`, new THREE.Vector3(i * 0.12 - 1.4, 1, 0), cam),
+    )
+    declutter(ts, cam)
+
+    const shown = ts.filter((t) => t.plate.group.visible)
+    expect(shown.length).toBeGreaterThan(0)
+    expect(shown.length).toBeLessThan(ts.length)
+    /* Whatever survived has to be legible. */
+    expect(worstOverlap(shown.map((t) => t.plate), cam)).toBeLessThan(0.25)
+  })
+
+  it('hides a tag’s stem along with the tag', () => {
+    const cam = viewer()
+    const ts = Array.from({ length: 24 }, (_, i) =>
+      tag(`replication-controller-${i}`, new THREE.Vector3(i * 0.12 - 1.4, 1, 0), cam),
+    )
+    declutter(ts, cam)
+    for (const t of ts) {
+      if (!t.plate.group.visible) expect(t.plate.stem.visible).toBe(false)
+    }
+  })
+
+  it('spends connector tags before boundary tags', () => {
+    /* A boundary names a whole tier; a connector tag names one hop. Priority
+       only arbitrates when sliding cannot resolve the crowd — two tags alone
+       simply move apart, so the contest needs a genuine crush. */
+    const cam = viewer()
+    const crowd = Array.from({ length: 14 }, (_, i) =>
+      rankedTag(`loopback HTTP ${i}`, new THREE.Vector3(i * 0.1 - 0.7, 1, 0), cam, LABEL_RANK.edge),
+    )
+    const tier = rankedTag('Service tier', new THREE.Vector3(0, 1, 0), cam, LABEL_RANK.group)
+
+    declutter([...crowd, tier], cam)
+
+    expect(tier.plate.group.visible, 'the tier tag must survive').toBe(true)
+    expect(crowd.some((t) => !t.plate.group.visible), 'some hop tags must go').toBe(true)
+  })
+
+  it('shows a hidden tag again once the camera gives it room', () => {
+    /* Nothing is deleted. The decision is remade every frame, so a tag dropped
+       at one angle comes back at another. */
+    const tight = viewer()
+    const ts = Array.from({ length: 24 }, (_, i) =>
+      tag(`replication-controller-${i}`, new THREE.Vector3(i * 0.12 - 1.4, 1, 0), tight),
+    )
+    declutter(ts, tight)
+    expect(ts.some((t) => !t.plate.group.visible)).toBe(true)
+
+    /* Same tags, spread out. */
+    const roomy = viewer()
+    ts.forEach((t, i) => {
+      t.top.set(i * 3 - 34, 1, 0)
+      orientNameplate(t.plate, t.top, roomy)
+    })
+    declutter(ts, roomy)
+    expect(ts.every((t) => t.plate.group.visible)).toBe(true)
   })
 })
