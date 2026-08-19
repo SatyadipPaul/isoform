@@ -86,9 +86,23 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          npm --version
           if [ -n "$NODE_AUTH_TOKEN" ]; then
             echo "::notice::Publishing with NPM_TOKEN (bootstrap). Delete the secret once trusted publishing is configured."
           else
-            echo "::notice::Publishing via OIDC trusted publishing — no stored token."
+            echo "::notice::No NPM_TOKEN present — publishing via OIDC trusted publishing."
+            # `setup-node` with `registry-url` writes an .npmrc line reading
+            # //registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}
+            # and with the secret gone that expands to an EMPTY credential.
+            # npm then rejects it as bad auth rather than falling through to
+            # OIDC, so the trusted-publishing path is never reached and the
+            # failure reads like a missing token — which is exactly the shape
+            # of the v0.8.1 failure: every gate green, `Publish` red.
+            for f in "$NPM_CONFIG_USERCONFIG" "$HOME/.npmrc"; do
+              if [ -n "$f" ] && [ -f "$f" ]; then
+                sed -i '/_authToken/d' "$f"
+                echo "cleared the empty auth line from $f"
+              fi
+            done
           fi
           npm publish -w @satyadip28/isoform --provenance --access public
