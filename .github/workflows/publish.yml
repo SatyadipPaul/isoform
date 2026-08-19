@@ -114,4 +114,17 @@ jobs:
               echo "::error::No OIDC token endpoint. id-token: write is missing or the job cannot mint one."
             fi
           fi
-          npm publish -w @satyadip28/isoform --provenance --access public
+          # Published from inside the package, not with `-w` from the root.
+          #
+          # OIDC resolves the trusted publisher from the manifest npm is
+          # publishing *from*, and with `-w` that is the workspace root — which
+          # is `isoform-workspace`, private, and has no trusted publisher. npm
+          # finds no credential for it and reports a bare ENEEDAUTH, which reads
+          # exactly like "trusted publishing is not set up" even when it is.
+          #
+          # Token auth never cared, which is why `-w` published 0.6.0 through
+          # 0.8.0 without trouble and then broke the moment the package started
+          # disallowing tokens. `prepublishOnly` reaches the repo scripts by
+          # relative path, so it works unchanged from here.
+          cd packages/isoform
+          npm publish --provenance --access public
