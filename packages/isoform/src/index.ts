@@ -3,7 +3,7 @@
 /* Kept in step with package.json by a test, because nothing else notices: this
    sat at 0.5.0 through the whole of the 0.6.0 release without a single check
    failing, and it is the string a consumer reads when reporting a bug. */
-export const VERSION = '0.8.1'
+export const VERSION = '0.8.2'
 
 export * from './foundry/rng.js'
 export * from './foundry/textures.js'

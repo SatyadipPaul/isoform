@@ -257,3 +257,52 @@ describe('tags stay readable as the camera climbs', () => {
     expect(farEnd.distanceTo(underside)).toBeLessThan(1e-6)
   })
 })
+
+describe('a leader stays a leader', () => {
+  /**
+   * Camera close to the horizon, which is where this goes wrong.
+   *
+   * Tags share a chain only if they share a band of screen height, and a low
+   * camera flattens the whole diagram into one band — so every tag joins one
+   * chain, the required gaps accumulate across the entire set, and the solve
+   * spreads them over a screen distance far wider than the frame.
+   */
+  function grazing(): THREE.PerspectiveCamera {
+    const cam = new THREE.PerspectiveCamera(32, 3.3, 0.1, 500)
+    cam.position.set(2, 1.4, 26)
+    cam.lookAt(0, 1, 0)
+    cam.updateMatrixWorld(true)
+    return cam
+  }
+
+  it('never slides a tag further than a couple of its own widths', () => {
+    /* Unbounded, a 26-part diagram 39.6 units across measured a median slide of
+       26.7 units and a worst of 49.5 — further than the whole system is wide.
+       What that draws is not a displaced label but a hairline stem stretched
+       across the picture. */
+    const cam = grazing()
+    const ts = Array.from({ length: 40 }, (_, i) =>
+      tag(`detection log, mirrored past what the device keeps ${i}`, new THREE.Vector3(i * 0.7 - 14, 1, 0), cam),
+    )
+    const home = ts.map((t) => t.plate.group.position.clone())
+
+    declutter(ts, cam)
+
+    ts.forEach((t, i) => {
+      const slid = home[i].distanceTo(t.plate.group.position)
+      /* 3 widths each way, plus slack for the plate's own thickness. */
+      expect(slid, `tag ${i}`).toBeLessThan(t.plate.width * 3.5)
+    })
+  })
+
+  it('still separates a crowd that fits within reach', () => {
+    /* The bound must not turn the pass off for the diagrams it was working on. */
+    const cam = viewer()
+    const ts = [-0.5, -0.2, 0.1, 0.4].map((x, i) =>
+      tag(`svc-${i}`, new THREE.Vector3(x, 1, 0), cam),
+    )
+    expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeGreaterThan(0.2)
+    declutter(ts, cam)
+    expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeLessThan(0.02)
+  })
+})

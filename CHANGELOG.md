@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.8.2 — Leaders that stay leaders
+
+The reported fault, correctly this time. 0.8.1 fixed a real defect at *high*
+camera angles; what was actually reported was at low ones, where the labels
+"create these weird thread-like objects".
+
+Those threads are leader stems. `declutter` slides a tag sideways and the stem
+stretches to keep it joined to its part, and the pass had no limit on how far it
+would slide. Tags share a chain only if they share a band of screen height — and
+a low camera flattens the whole diagram into a single band, so every tag joins
+one chain, the required gaps accumulate across the entire set, and the solve
+spreads them over a screen distance far wider than the frame.
+
+Measured on a 26-part diagram 39.6 units across, viewed from 7° above the
+horizon:
+
+| | before | after |
+|---|---|---|
+| median slide | 26.7u | 6.4u |
+| worst slide | 49.5u | 12.2u |
+| tags dragged past half the diagram | 34 of 54 | 0 of 54 |
+
+Tags were being thrown further than the entire system is wide, landing at the
+frame edges with a hairline stem stretched across the picture behind them. A tag
+now travels at most about three of its own widths and then stays put, overlapping
+if it must. An overlap is a local, legible fault; a thread across the frame is
+not.
+
+Three, not less: six long tags crammed into two world units genuinely need that
+much room to come apart, and a tighter bound turned the pass off for diagrams it
+was already solving — caught by the tests written for that case, which is why the
+bound was tuned against them rather than chosen.
+
+No cost where it was already working: the five reference architectures still
+measure 0 collisions and 0 clipped at the hero pose.
+
 ## 0.8.1 — Tags stay readable when you look down at them
 
 Reported from a live export: labels render correctly from some angles and
