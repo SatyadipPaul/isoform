@@ -1,7 +1,7 @@
 {
   "name": "isoform-workspace",
   "private": true,
-  "version": "0.8.2",
+  "version": "0.8.3",
   "type": "module",
   "description": "Development workspace for the isoform library and its demo host",
   "workspaces": [

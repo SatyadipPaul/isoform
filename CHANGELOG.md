@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.8.3 — A leader you can follow
+
+0.8.2 stopped tags being flung across the frame and started dropping the ones
+that would not fit. It left the middle case wrong: tags still drifted far enough
+from their parts to read as captions floating in open space, with a hairline
+reaching back toward something they might belong to.
+
+The cap was the mistake. It was expressed in multiples of the tag's **own
+width**, which is the intuitive form and is backwards — the widest tags get the
+longest leashes, and the widest tags are exactly the ones that need moving. So
+the labels that strayed furthest were the ones carrying the most text.
+
+Measured on a 26-part diagram at the hero angle:
+
+| | before | after |
+|---|---|---|
+| median leader, as % of frame width | **14.3%** | 3.5% |
+| worst leader | 24.2% | 3.5% |
+| tags more than 5% of the frame from their part | 40 of 45 | 0 |
+| tags sitting off the frame edge | 4 | **0** |
+| clipped nameplates | 5 | **0** |
+
+A tag now travels at most 3.5% of the frame's width, measured on screen where the
+reader is, and past that it stays put and takes its chances with the cull. Sliding
+is the small adjustment; hiding is the answer to real crowding.
+
+Tags that end up off the edge of the picture are dropped as well. A name nobody
+can finish reading is worse than no name, and it is the first thing the eye finds
+because it sits alone against the backdrop.
+
+The tests for the old behaviour asserted that a crowd is always fanned apart
+until nothing overlaps. That is no longer the contract and they were changed to
+match it: overlap is now judged among the tags still **drawn**, because a hidden
+tag is a resolved one.
+
 ## 0.8.2 — Tags thin out, and connectors answer back
 
 ### Click a part, see what it talks to

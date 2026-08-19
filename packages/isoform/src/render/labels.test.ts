@@ -80,6 +80,11 @@ function worstOverlap(plates: Nameplate[], cam: THREE.Camera): number {
   return worst
 }
 
+/** The plates a pass left on screen. Hidden ones are not part of the picture. */
+function shown(ts: Array<{ plate: Nameplate }>): Nameplate[] {
+  return ts.filter((t) => t.plate.group.visible).map((t) => t.plate)
+}
+
 describe('tags draw over the model', () => {
   const depthFlags = (n: Nameplate): boolean[] => {
     const out: boolean[] = []
@@ -176,7 +181,10 @@ describe('declutter', () => {
 
     expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeGreaterThan(0.2)
     declutter(ts, cam)
-    expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeLessThan(0.02)
+    /* Among the tags still drawn. Crowding past what a short leader can solve
+       is answered by hiding, not by fanning the set across the frame, so a
+       hidden tag is a resolved tag and counting it asserts the old rule. */
+    expect(worstOverlap(shown(ts), cam)).toBeLessThan(0.02)
   })
 
   it('clears tags spread across depth, where one world unit is not one screen unit', () => {
@@ -189,7 +197,10 @@ describe('declutter', () => {
 
     expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeGreaterThan(0.2)
     declutter(ts, cam)
-    expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeLessThan(0.02)
+    /* Among the tags still drawn. Crowding past what a short leader can solve
+       is answered by hiding, not by fanning the set across the frame, so a
+       hidden tag is a resolved tag and counting it asserts the old rule. */
+    expect(worstOverlap(shown(ts), cam)).toBeLessThan(0.02)
   })
 })
 
@@ -305,7 +316,10 @@ describe('a leader stays a leader', () => {
     )
     expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeGreaterThan(0.2)
     declutter(ts, cam)
-    expect(worstOverlap(ts.map((t) => t.plate), cam)).toBeLessThan(0.02)
+    /* Among the tags still drawn. Crowding past what a short leader can solve
+       is answered by hiding, not by fanning the set across the frame, so a
+       hidden tag is a resolved tag and counting it asserts the old rule. */
+    expect(worstOverlap(shown(ts), cam)).toBeLessThan(0.02)
   })
 })
 
@@ -378,8 +392,13 @@ describe('tags thin out instead of piling up', () => {
     declutter(ts, tight)
     expect(ts.some((t) => !t.plate.group.visible)).toBe(true)
 
-    /* Same tags, spread out. */
-    const roomy = viewer()
+    /* Same tags, given room — but still inside the frame. Spread far enough
+       to leave it they would be dropped for being off-screen, a different
+       rule, and this would pass or fail for the wrong reason. */
+    const roomy = new THREE.PerspectiveCamera(32, 2, 0.1, 500)
+    roomy.position.set(0, 6, 120)
+    roomy.lookAt(0, 1, 0)
+    roomy.updateMatrixWorld(true)
     ts.forEach((t, i) => {
       t.top.set(i * 3 - 34, 1, 0)
       orientNameplate(t.plate, t.top, roomy)

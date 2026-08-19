@@ -552,35 +552,28 @@ export function declutter(plates: PlacedLabel[], camera: THREE.Camera): void {
   }
 
   /**
-   * As far as a tag may be slid from the part it names, in multiples of its own
-   * width.
+   * As far as a tag may be slid from the part it names, as a fraction of the
+   * frame's width.
    *
-   * The chain solve above is exact and unbounded, and unbounded is wrong. Tags
-   * only enter the same chain if they share a band of screen height — and at a
-   * low camera the whole diagram projects into a narrow horizontal band, so all
-   * of them do. The required gaps then accumulate across the entire set, and the
-   * chain spreads over a screen distance far wider than the frame.
+   * Measured in *screen* terms, not in multiples of the tag's own width. The
+   * width-relative version is the intuitive one and it is backwards: the widest
+   * tags get the longest leashes, and the widest tags are precisely the ones
+   * that need moving, so the labels that stray furthest are the ones carrying
+   * the most text. Measured on a 26-part diagram at the hero angle, the median
+   * tag sat **14.3% of the frame** from its part and forty of forty-five were
+   * past 5% — which on screen is a caption floating in open space with a hairline
+   * reaching back toward something it might belong to.
    *
-   * Measured on a 26-part diagram 39.6 units across, viewed from 7° above the
-   * horizon: the median tag was slid **26.7 units** and the worst **49.5** —
-   * further than the whole system is wide, with 34 of 54 dragged past half the
-   * diagram. On screen that is not a displaced label, it is a hairline stem
-   * stretched clean across the picture, and the reader sees threads lying over
-   * the diagram rather than labels beside parts.
-   *
-   * Past about three of its own widths a leader has stopped associating
-   * anything anyway, so the tag stays put and is allowed to overlap. An overlap
-   * is a local, legible fault; a thread across the frame is not.
-   *
-   * Three, not less: six long tags crammed into two world units genuinely need
-   * that much room to come apart, and a tighter bound turns the pass off for
-   * diagrams it was already solving correctly.
+   * What a reader can follow is a leader of a few percent of the frame. Past
+   * that the association is gone whatever the arithmetic says, so the tag stops
+   * and takes its chances with the cull below. Sliding is the small adjustment;
+   * hiding is the answer to real crowding.
    */
-  const MAX_TRAVEL_WIDTHS = 3.0
+  const MAX_TRAVEL_FRAME = 0.035
 
-  /** A tag's solved position, held within reach of its own part. */
+  /** A tag's solved position, held within a leader's reach of its own part. */
   const clamped = (it: (typeof items)[number]): number => {
-    const reach = MAX_TRAVEL_WIDTHS * it.hw * 2
+    const reach = MAX_TRAVEL_FRAME * 2
     return Math.max(it.x0 - reach, Math.min(it.x0 + reach, it.x))
   }
 
@@ -648,6 +641,14 @@ function cull(
 
   const kept: typeof order = []
   for (const it of order) {
+    /* A tag hanging off the edge of the picture is a name nobody can finish
+       reading, and it is the first thing the eye finds because it sits alone
+       against the backdrop. Dropped rather than shown truncated. */
+    if (Math.abs(it.x) + it.hw > 1 || Math.abs(it.y) + it.hh > 1) {
+      it.plate.group.visible = false
+      it.plate.stem.visible = false
+      continue
+    }
     const area = 4 * it.hw * it.hh
     let worst = 0
     for (const k of kept) {
