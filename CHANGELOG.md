@@ -1,6 +1,26 @@
 # Changelog
 
-## 0.8.2 — Tags thin out, the way a map's do
+## 0.8.2 — Tags thin out, and connectors answer back
+
+### Click a part, see what it talks to
+
+`viewer.emphasise(id)`, and every click does it. Incoming connectors take the
+cool tint, outgoing the warm one, and a bead runs each of them in the direction
+it carries — outward along what the part feeds, inward along what feeds it.
+
+The hues are opposed rather than merely different: telling "what feeds this" from
+"what this feeds" is a binary classification made at a glance, and warm against
+cool survives a glance, peripheral vision, and the ~8% of men with a red/green
+deficiency that a red/green pairing would not.
+
+Found while building it, and invisible without looking: past 24 connectors the
+runs are baked into one merged buffer that holds *copies* of their materials, so
+substituting a material on the unmerged group changes nothing on screen. The tint
+applied cleanly to all eleven incident edges of a 40-connector diagram and not one
+pixel moved — while the travelling beads, which are separate meshes and never
+merged, animated perfectly and made it look as though the whole feature worked.
+The buffer is now re-concatenated on every emphasis change, and on clearing it,
+which is the same lesson `setFocus` learned first.
 
 Two rounds on one report. The first bounded how far a tag may be slid; this one
 decides what happens to the tags that still do not fit, which is the half that

@@ -221,6 +221,23 @@ rendered identically everywhere, so a reader learns it once:
 says nothing, the other says someone checked — and a diagram where everything is
 fine must not read as one where everything is flagged.
 
+### Show what a part talks to
+
+Click a part in a viewer and its connectors light up by direction — incoming
+cool, outgoing warm, each with a shine running the way it carries.
+
+```ts
+const viewer = createViewer(el, { doc })
+viewer.emphasise('orders')   // or let a click do it; null clears
+```
+
+Three cues doing three jobs. **Direction by hue** carries the information, and
+the two are opposed rather than merely different so the classification survives a
+glance, peripheral vision, and a red/green deficiency. **A travelling shine**
+makes the direction unambiguous where a static arrowhead is a few pixels and is
+regularly hidden by the geometry it points into. **A pulse** keeps a short
+connector reading as live rather than as a stray dot.
+
 ### Point at part of a diagram
 
 Emphasise a subset; everything else recedes toward the backdrop, connectors and

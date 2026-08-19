@@ -28,7 +28,7 @@ import {
   type Nameplate,
 } from './labels.js'
 import { setStubsVisible } from '../foundry/geometry.js'
-import { releaseMaterial, type IsoMaterial } from '../foundry/materials.js'
+import { palette, releaseMaterial, type IsoMaterial } from '../foundry/materials.js'
 import {
   appearanceKey,
   appearanceMaterials,
@@ -40,7 +40,7 @@ import { Router, groupPortBox } from '../route/router.js'
 import { boxPorts, portBoxOf, type PortBox } from '../parts/registry.js'
 import { boxCorners } from './camera.js'
 import { TracePlayer } from './trace.js'
-import { buildEdge } from '../route/styles.js'
+import { buildEdge, routeCurve } from '../route/styles.js'
 import type { PortId } from '../parts/types.js'
 
 export interface NodeView {
@@ -166,6 +166,9 @@ function disposeTree(root: THREE.Object3D): void {
 
 const PROXY_MAT = new THREE.MeshBasicMaterial({ visible: false })
 
+/** Scratch for the travelling shine, so per-frame motion allocates nothing. */
+const SHINE_AT = new THREE.Vector3()
+
 /** Boundary pick shell — see the note where it is built. */
 const GROUP_PROXY_MAT = new THREE.MeshBasicMaterial({ visible: false, side: THREE.BackSide })
 
@@ -205,6 +208,47 @@ const EDGE_SELECT_MAT = new THREE.MeshBasicMaterial({
   depthWrite: false,
 })
 
+/* ------------------------------------------------------------------ *
+ * Selection emphasis
+ * ------------------------------------------------------------------ */
+
+/**
+ * Hues for the two directions, opposed rather than merely different.
+ *
+ * A reader asked to tell "what feeds this" from "what this feeds" is doing a
+ * binary classification at a glance, and the only encoding that survives a
+ * glance is one whose ends cannot be confused. Warm against cool does that at
+ * any size, in peripheral vision, and for the ~8% of men with a red/green
+ * deficiency — which a red/green pairing would not. Both are already in the
+ * palette: the data teal and the message amber.
+ */
+const EMPHASIS_IN = '#3ED8BC'
+const EMPHASIS_OUT = '#F0AE5C'
+/* The same two as numbers. `tint` on an appearance takes the CSS string; the
+   palette's `lit` finish takes a colour argument. One pair of values, spelled
+   for each caller, so the tube and the bead running it cannot drift apart. */
+const EMPHASIS_IN_HEX = 0x3ed8bc
+const EMPHASIS_OUT_HEX = 0xf0ae5c
+
+/** Radius of the travelling shine. Matches the trace packet, which reads well. */
+const SHINE_R = 0.12
+
+/** Seconds for one sweep to run the length of a connector. */
+const SHINE_PERIOD = 1.5
+
+/** How far the pulse swings either side of its base brightness. */
+const PULSE_DEPTH = 0.5
+
+interface Shine {
+  mesh: THREE.Mesh
+  curve: THREE.CatmullRomCurve3
+  /** True when the sweep runs away from the selected part. */
+  outward: boolean
+  /** Staggered, so a fan of connectors does not flash in lockstep. */
+  offset: number
+  material: THREE.MeshStandardMaterial
+}
+
 export interface ReconcilerOptions {
   /** Materials for the connector anchor markers. */
   anchorIdle: THREE.Material
@@ -223,10 +267,16 @@ export class Reconciler {
   readonly groupPickLayer = new THREE.Group()
   /** Trace packets and their markers. Last, so they read over the diagram. */
   readonly traceLayer = new THREE.Group()
+  /** Travelling shines for the current selection. Empty when nothing is picked. */
+  readonly emphasisLayer = new THREE.Group()
 
   private nodes = new Map<string, NodeView>()
   private groups = new Map<string, GroupView>()
   private edges = new Map<string, EdgeView>()
+  /** Node whose connectors are currently lit, and the edges lit for it. */
+  private emphasis: string | null = null
+  private emphasised = new Set<string>()
+  private shines: Shine[] = []
   private edgeUpdaters: Array<(t: number) => void> = []
   private doc: Doc | null = null
   private anchorGeo: THREE.BufferGeometry
@@ -275,6 +325,7 @@ export class Reconciler {
       this.labelLayer,
       this.anchorLayer,
       this.traceLayer,
+      this.emphasisLayer,
     )
   }
 
@@ -462,6 +513,7 @@ export class Reconciler {
   tick(t: number): void {
     for (const v of this.nodes.values()) if (v.detail === 'full') v.update?.(t)
     for (const u of this.edgeUpdaters) u(t)
+    this.tickEmphasis(t)
     /* The trace player works in elapsed seconds, not absolute ones — playback
        has a duration, and a request that took 900ms should take about 900ms to
        watch however long the page has been open. The first tick has no previous
@@ -881,6 +933,139 @@ export class Reconciler {
        settles on changes every frame and the tags visibly slide. Correct for a
        still or a camera the user is driving; wrong for an animated export. */
     if (declutterOverlaps) declutter(plates, camera)
+  }
+
+
+  /**
+   * Light up what a part talks to, and which way.
+   *
+   * Selecting a part answers "what is this" on its own; the question a reader
+   * actually has next is "what feeds it and what does it feed", and on a diagram
+   * with forty connectors that is not answerable by tracing lines by eye.
+   *
+   * Three cues, doing three different jobs:
+   *
+   *  - **Direction by hue.** Incoming connectors take the cool tint, outgoing the
+   *    warm one. This is the part that carries the information; the rest is
+   *    attention.
+   *  - **A travelling shine.** One bright bead running each connector, outward
+   *    along what the part feeds and inward along what feeds it. Motion is what
+   *    makes the direction unambiguous — a static arrowhead is a few pixels and
+   *    is regularly hidden by the geometry it points into.
+   *  - **A pulse.** The bead breathes, so an edge that happens to be short still
+   *    reads as live rather than as a stray dot.
+   *
+   * Passing `null` clears it. The tint is applied through the same baseline
+   * substitution `dim` uses, so it is exactly reversible and survives a reroute.
+   */
+  setEmphasis(nodeId: string | null): void {
+    if (this.emphasis === nodeId) return
+
+    /* Put back whatever the last selection recoloured, before working out the
+       next one — an edge may be incoming for one part and outgoing for another,
+       and repainting over a live substitution would strand the baseline. */
+    for (const id of this.emphasised) {
+      const view = this.edges.get(id)
+      if (view) paint(view.group, null)
+    }
+    const hadAny = this.emphasised.size > 0
+    this.emphasised.clear()
+    this.clearShines()
+    this.emphasis = nodeId
+    if (!nodeId) {
+      /* Clearing has to re-concatenate too: the buffer still holds the tinted
+         copies, so dropping the substitution without rebuilding leaves the last
+         selection lit forever. */
+      if (hadAny) this.rebuildEdgeMerge()
+      return
+    }
+
+    for (const [id, view] of this.edges) {
+      const edge = this.doc?.edges.find((e: DocEdge) => e.id === id)
+      if (!edge) continue
+      const outward = edge.from.node === nodeId
+      const inward = edge.to.node === nodeId
+      if (!outward && !inward) continue
+
+      paint(
+        view.group,
+        appearanceMaterials(collectBaselines(view.group), 'link', {
+          tint: outward ? EMPHASIS_OUT : EMPHASIS_IN,
+        }),
+      )
+      this.emphasised.add(id)
+      this.addShine(view, outward)
+    }
+
+    this.rebuildEdgeMerge()
+  }
+
+  /**
+   * Force the merged connector buffer to be concatenated again.
+   *
+   * Past `EDGE_MERGE_MIN` connectors the runs are baked into one shared buffer,
+   * and that buffer holds *copies* of the materials as they were when it was
+   * built. Substituting a material on the unmerged group after that is invisible
+   * — measured on a 40-connector diagram, the tint applied cleanly to every
+   * incident edge and not one pixel of the picture changed, while the travelling
+   * shines (separate meshes, never merged) animated correctly and made it look
+   * as though the whole thing worked.
+   *
+   * `mergeEdges` skips a rebuild when membership and geometry are unchanged,
+   * which is exactly this case, so the old buffer has to be dropped first. Same
+   * reasoning as `setFocus`, which is where this was learned the first time.
+   */
+  private rebuildEdgeMerge(): void {
+    if (!this.edgeMerged) return
+    this.dropEdgeMerge()
+    this.mergeEdges(new Set())
+  }
+
+  /** The part currently emphasised, if any. */
+  get emphasisedNode(): string | null {
+    return this.emphasis
+  }
+
+  /** A bead that will run this connector. Direction follows the edge's own sense. */
+  private addShine(view: EdgeView, outward: boolean): void {
+    if (view.points.length < 2) return
+    const material = palette('link').lit(outward ? EMPHASIS_OUT_HEX : EMPHASIS_IN_HEX, 3.4)
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(SHINE_R, 16, 12), material)
+    /* Same reasoning as the trace packet: the bead is the thing the eye tracks,
+       so it must not be swallowed by the tube it is travelling inside. */
+    mesh.material.depthTest = false
+    mesh.renderOrder = 4
+    this.emphasisLayer.add(mesh)
+    this.shines.push({
+      mesh,
+      curve: routeCurve(view.points),
+      outward,
+      /* Spread the beads around the cycle by connector count, so a part with six
+         edges reads as six separate runs rather than one synchronised flash. */
+      offset: this.shines.length * 0.17,
+      material: material as unknown as THREE.MeshStandardMaterial,
+    })
+  }
+
+  private clearShines(): void {
+    for (const s of this.shines) {
+      s.mesh.removeFromParent()
+      s.mesh.geometry.dispose()
+      releaseMaterial(s.material as unknown as IsoMaterial)
+    }
+    this.shines.length = 0
+  }
+
+  /** Advance the travelling shines. Called from `tick`. */
+  private tickEmphasis(t: number): void {
+    for (const s of this.shines) {
+      const u = ((t / SHINE_PERIOD + s.offset) % 1 + 1) % 1
+      s.curve.getPointAt(s.outward ? u : 1 - u, SHINE_AT)
+      s.mesh.position.copy(SHINE_AT)
+      /* Brightest mid-run and softest at the ends, so a bead arriving at a part
+         fades into it instead of snapping back to the far end. */
+      s.material.emissiveIntensity = 3.4 * (1 - PULSE_DEPTH + PULSE_DEPTH * Math.sin(Math.PI * u))
+    }
   }
 
   /** Returns true when the placement actually moved. */

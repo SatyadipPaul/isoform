@@ -286,3 +286,91 @@ describe('nameplates lifted over the model', () => {
     }
   })
 })
+
+describe('selection emphasis', () => {
+  /** A hub with two feeds in and two feeds out, plus an unrelated pair. */
+  function hubDoc(): Doc {
+    const doc = emptyDoc()
+    const ids = ['in1', 'in2', 'hub', 'out1', 'out2', 'x', 'y']
+    doc.nodes = ids.map(
+      (id, i): DocNode => ({ id, type: 'service', label: id, pos: [i * 3, 0], rot: 0 }),
+    )
+    doc.edges = [
+      { id: 'e1', from: { node: 'in1' }, to: { node: 'hub' }, kind: 'sync', route: 'auto' },
+      { id: 'e2', from: { node: 'in2' }, to: { node: 'hub' }, kind: 'sync', route: 'auto' },
+      { id: 'e3', from: { node: 'hub' }, to: { node: 'out1' }, kind: 'sync', route: 'auto' },
+      { id: 'e4', from: { node: 'hub' }, to: { node: 'out2' }, kind: 'sync', route: 'auto' },
+      { id: 'e5', from: { node: 'x' }, to: { node: 'y' }, kind: 'sync', route: 'auto' },
+    ]
+    return doc
+  }
+
+  function synced(): Reconciler {
+    const rec = new Reconciler(new THREE.Scene(), { anchorIdle: palette('link').lit('lit', 0.9) })
+    rec.sync(hubDoc())
+    return rec
+  }
+
+  it('lights every connector touching the part, and nothing else', () => {
+    const rec = synced()
+    rec.setEmphasis('hub')
+    /* Four incident connectors, one bead each. The unrelated x→y gets none. */
+    expect(rec.emphasisLayer.children).toHaveLength(4)
+    expect(rec.emphasisedNode).toBe('hub')
+  })
+
+  it('gives the two directions opposite hues', () => {
+    /* The whole point: "what feeds this" and "what this feeds" must not be
+       confusable at a glance, so the two sets cannot share a colour. */
+    const rec = synced()
+    rec.setEmphasis('hub')
+    const hues = new Set(
+      rec.emphasisLayer.children.map((m) => {
+        const mat = (m as THREE.Mesh).material as THREE.MeshStandardMaterial
+        return mat.emissive.getHexString()
+      }),
+    )
+    expect(hues.size).toBe(2)
+  })
+
+  it('takes it all back off', () => {
+    /* The failure this whole file exists to guard: emphasis that does not clear.
+       A selection left lit after the next click is worse than none at all. */
+    const rec = synced()
+    rec.setEmphasis('hub')
+    expect(rec.emphasisLayer.children.length).toBeGreaterThan(0)
+
+    rec.setEmphasis(null)
+    expect(rec.emphasisLayer.children).toHaveLength(0)
+    expect(rec.emphasisedNode).toBeNull()
+  })
+
+  it('swaps cleanly from one part to another', () => {
+    /* An edge is outgoing for one endpoint and incoming for the other, so
+       repainting without first restoring would strand the baseline and leave the
+       previous selection's tint behind. */
+    const rec = synced()
+    rec.setEmphasis('hub')
+    rec.setEmphasis('x')
+    expect(rec.emphasisedNode).toBe('x')
+    expect(rec.emphasisLayer.children).toHaveLength(1)
+  })
+
+  it('does nothing for a part with no connectors', () => {
+    const rec = synced()
+    rec.setEmphasis('in1')
+    expect(rec.emphasisLayer.children).toHaveLength(1)
+    rec.setEmphasis('nonexistent')
+    expect(rec.emphasisLayer.children).toHaveLength(0)
+  })
+
+  it('moves the beads along their routes as time passes', () => {
+    const rec = synced()
+    rec.setEmphasis('hub')
+    rec.tick(0)
+    const start = rec.emphasisLayer.children.map((m) => m.position.clone())
+    rec.tick(0.4)
+    const later = rec.emphasisLayer.children.map((m) => m.position.clone())
+    expect(start.some((p, i) => p.distanceTo(later[i]) > 0.01)).toBe(true)
+  })
+})

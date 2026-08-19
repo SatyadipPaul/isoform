@@ -56,6 +56,14 @@ export interface Viewer {
   /** The camera as it stands, in orbit space — for authoring shots by eye. */
   pose(): CameraPose
   focus(ids: Iterable<string> | null): void
+  /**
+   * Light the connectors of one part — incoming cool, outgoing warm, each with a
+   * shine running the direction it carries. `null` clears it.
+   *
+   * A click does this already; this is for a host driving the view from its own
+   * UI, so a list selection on the page and a click in the canvas agree.
+   */
+  emphasise(nodeId: string | null): void
   /** False when the trace is missing or has nothing drawable in it. */
   playTrace(id: string): boolean
   pauseTrace(): void
@@ -190,7 +198,13 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions): Viewe
     const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y)
     downAt = null
     if (moved > CLICK_SLOP) return
-    emit('select', pickAt(e))
+    const picked = pickAt(e)
+    /* Light the picked part's connectors before telling anyone it was picked, so
+       a host that re-renders on the event sees the emphasis already applied.
+       Clicking empty space clears it, which is the only way back for a reader
+       with no keyboard. */
+    reconciler.setEmphasis(picked)
+    emit('select', picked)
   }
   const onMove = (e: PointerEvent): void => {
     if (!listeners.hover.size) return
@@ -266,6 +280,7 @@ export function createViewer(container: HTMLElement, opts: ViewerOptions): Viewe
       listeners[event].add(fn)
       return () => listeners[event].delete(fn)
     },
+    emphasise: (id) => reconciler.setEmphasis(id),
     resize,
     destroy() {
       if (destroyed) return
