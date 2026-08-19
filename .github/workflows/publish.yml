@@ -102,5 +102,16 @@ jobs:
                 echo "cleared the token line from $f"
               fi
             done
+            # Say whether the OIDC machinery is even available, so a failure
+            # here distinguishes "GitHub minted no token" from "npm refused the
+            # one it got". Without this the log says only ENEEDAUTH, which reads
+            # identically for both and sent this round in circles.
+            if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ]; then
+              echo "OIDC token endpoint present — id-token: write is in effect."
+              echo "If this still fails with ENEEDAUTH, npm has no trusted publisher"
+              echo "registered for @satyadip28/isoform pointing at this repo and publish.yml."
+            else
+              echo "::error::No OIDC token endpoint. id-token: write is missing or the job cannot mint one."
+            fi
           fi
           npm publish -w @satyadip28/isoform --provenance --access public
