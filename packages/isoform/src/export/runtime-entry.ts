@@ -38,6 +38,15 @@ export interface IsoformPageApi {
   readonly viewer: Viewer
   readonly doc: Doc
   focus(ids: string[] | null): void
+  /**
+   * Light one part's connectors by direction — incoming cool, outgoing warm,
+   * each with a shine running the way it carries. `null` clears it.
+   *
+   * Clicking a part in the canvas already does this. This is for a host page
+   * driving the view from its own UI, so a selection in the page and a click in
+   * the diagram agree rather than fighting.
+   */
+  emphasise(nodeId: string | null): void
   playTrace(id: string): boolean
   pauseTrace(): void
   seekTrace(u: number): void
@@ -74,6 +83,7 @@ function boot(): void {
     viewer,
     doc,
     focus: (ids) => viewer.focus(ids),
+    emphasise: (id) => viewer.emphasise(id),
     playTrace: (id) => viewer.playTrace(id),
     pauseTrace: () => viewer.pauseTrace(),
     seekTrace: (u) => viewer.seekTrace(u),
